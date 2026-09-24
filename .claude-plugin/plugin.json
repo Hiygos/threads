@@ -1,0 +1,10 @@
+{
+  "name": "threads",
+  "version": "0.0.0",
+  "description": "A memory layer for open questions: threads with a provisional position, kept honest across sessions by hooks.",
+  "author": { "name": "Hiygos" },
+  "homepage": "https://github.com/Hiygos/threads",
+  "repository": "https://github.com/Hiygos/threads",
+  "license": "MIT",
+  "keywords": ["memory", "decisions", "open-questions", "hooks"]
+}

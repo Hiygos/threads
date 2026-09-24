@@ -1,0 +1,11 @@
+{
+  "name": "threads",
+  "owner": { "name": "Hiygos" },
+  "plugins": [
+    {
+      "name": "threads",
+      "source": "./",
+      "description": "A memory layer for open questions, kept honest across sessions by hooks."
+    }
+  ]
+}
