@@ -33,6 +33,7 @@ contract.
 ## Child DOX Index
 
 - [`docs/`](docs/AGENTS.md) — agent-facing config (`docs/agents/`) and ADRs (`docs/adr/`, created lazily).
+- [`research/`](research/AGENTS.md) — findings from research tickets, one cited Markdown file per question.
 
 ## Agent skills
 
