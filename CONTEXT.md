@@ -36,6 +36,10 @@ _Avoid_: provider-agnostic version, portable version, standalone skill
 The implementation of the contract for Claude Code, where hooks do the upkeep and the instructions shrink to what hooks cannot do.
 _Avoid_: Claude Code version
 
+**Instructions**:
+The agent-facing text an implementation carries (what the plugin injects and its skill holds, or the skill's own text), written per implementation to conform to the contract, never copied from it.
+_Avoid_: contract (for this text)
+
 **Enforcement**:
 The part of the plugin that makes the contract self-enforcing instead of relying on the agent's discipline.
 
