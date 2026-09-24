@@ -2,8 +2,9 @@
 
 ## Purpose
 
-Source repo of the `threads` Claude Code plugin (see `README.md` for the goal).
-This file is the contract for agents working **on** the plugin, and the root of
+Source repo of `threads`: the Claude Code plugin and the skill for any harness
+(see `README.md` for the goal). This file is the contract for agents working
+**on** them, and the root of
 this repo's DOX hierarchy (see § DOX framework below).
 
 ## Ownership
@@ -14,8 +15,10 @@ contract.
 
 ## Local Contracts
 
-- **Scope: Claude Code only.** Other agents/harnesses are out of scope until
-  explicitly reopened.
+- **Scope: two implementations, one contract** (`docs/adr/0001-*`): the
+  plugin (Claude Code, hooks) and the skill (any harness, scripts run by the
+  agent). A change to the contract lands with both sides' conformance.
+  Plugins for other harnesses are out of scope until explicitly reopened.
 - **Public repo.** Never commit real thread content, personal paths, names, or
   credentials. Examples and fixtures are synthetic.
 - **English everywhere**: code, identifiers, comments, docs, and every string

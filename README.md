@@ -25,13 +25,17 @@ honest across sessions:
 
 ## Goal
 
-Ship `threads` as an installable Claude Code plugin: hooks + a skill +
-commands, self-contained, with no edits required to the user's
-`CLAUDE.md`.
+Ship `threads` as two implementations of one contract
+([ADR 0001](docs/adr/0001-two-implementations-one-contract.md)):
 
-The hooks are the point: they are what makes the layer self-enforcing.
-A provider-agnostic version (skill and contract only, no hooks) is **out of
-scope** for now.
+- **The plugin**: an installable Claude Code plugin (hooks + a lean skill +
+  commands), self-contained, with no edits required to the user's
+  `CLAUDE.md`. The hooks are the point: they make the layer self-enforcing.
+- **The skill**: for any agent harness, carrying the instructions and the
+  scripts the agent runs itself, since no hooks do it for it.
+
+Both follow the same contract, so they can share one `.threads/` folder.
+Plugins for harnesses other than Claude Code are **out of scope** for now.
 
 ## Where threads live
 
@@ -54,7 +58,7 @@ subfolder the session later works in, so a subfolder never grows a second
 notices) lives inside the resolved scope, so two scopes never share state.
 
 A scope is created explicitly by the user (e.g. an init command), never by the
-plugin on its own. The provider-agnostic skill follows the same rule, stated
+plugin on its own. The skill follows the same rule, stated
 as instructions instead of enforced by hooks.
 
 ## Origin
