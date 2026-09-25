@@ -46,7 +46,11 @@ Adapters:
     exit code and the files on disk are compared. `regen` maps to
     SessionStart, which runs the upkeep before injecting the briefing; the
     briefing itself is not the skill's `regen` output, so it is not compared
-    here.
+    here. `start` maps to SessionStart too, with the field `briefing`: its
+    `additionalContext` minus the plugin's rules, which it inserts as one
+    `# ` section right before the listing (the last `# ` section). Only the
+    briefing's data sections are thus compared with the skill's `start`
+    stdout; the cap never bites in a case's small fixtures.
   - `("skill", name)`: the command a plugin skill's body runs through `!`
     injection (`sh guard.sh <name> <operation arguments>`), whose stdout is
     compared with `stdout`. Such a command exits 0 on a refusal too (a
@@ -58,9 +62,14 @@ Adapters:
     text tells it to; stdout is compared with `stdout`, and a refusal exits
     non-zero as in the skill adapter. `ack` maps to the command line
     SessionStart gives for each retirement notice.
+
+Each adapter's own command prefix in the ack command lines of a briefing
+(`python3 <script>` for the skill, `sh <guard.sh>` for the plugin) is
+replaced by `{threads}`, so both compare with one golden.
 """
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -73,6 +82,7 @@ PLUGIN_GUARD = os.path.join(REPO, "plugin", "scripts", "guard.sh")
 
 # Skill operation -> plugin entry point (see the module docstring).
 PLUGIN_ENTRIES = {
+    "start": ("hook", "SessionStart", "briefing"),
     "regen": ("hook", "SessionStart", None),
     "init": ("skill", "init"),
     "ack": ("command", "ack"),
@@ -129,12 +139,26 @@ def base_env(case, sandbox, home):
     return env
 
 
+# Each adapter's command prefix in an ack command line (see the docstring).
+SKILL_COMMAND = "python3 " + shlex.quote(SKILL_SCRIPT)
+PLUGIN_COMMAND = "sh " + shlex.quote(PLUGIN_GUARD)
+
+
+def without_rules(context):
+    """A SessionStart briefing minus the plugin's rules: the `# ` section before the last."""
+    starts = [0] if context.startswith("# ") else []
+    starts += [i + 1 for i in range(len(context)) if context.startswith("\n# ", i)]
+    if len(starts) < 2:
+        raise AssertionError("no rules section before the listing:\n" + context)
+    return context[:starts[-2]] + context[starts[-1]:]
+
+
 def run_skill(start, env, case, operation=None):
     proc = subprocess.run(
         [sys.executable, SKILL_SCRIPT] + (operation or case["operation"]),
         cwd=start, env=env, capture_output=True,
     )
-    out = proc.stdout.decode("utf-8")
+    out = proc.stdout.decode("utf-8").replace(SKILL_COMMAND, "{threads}")
     return Result(proc.returncode, out, proc.stderr.decode("utf-8"), out)
 
 
@@ -159,7 +183,10 @@ def run_plugin(start, env, case, operation=None):
     )
     out = proc.stdout.decode("utf-8")
     stdout = None
-    if field is not None:
+    if field == "briefing":
+        context = json.loads(out)["hookSpecificOutput"]["additionalContext"] if out.strip() else ""
+        stdout = without_rules(context).replace(PLUGIN_COMMAND, "{threads}") if context else ""
+    elif field is not None:
         stdout = json.loads(out)["hookSpecificOutput"].get(field, "") if out.strip() else ""
     return Result(proc.returncode, stdout, proc.stderr.decode("utf-8"), out)
 

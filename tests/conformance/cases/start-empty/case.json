@@ -1,0 +1,8 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "start"
+  ],
+  "stdout": "# Active threads\n\nProject scope at {sandbox}; paths are relative to it.\n\nNo active threads.\n",
+  "refusal": null
+}

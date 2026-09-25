@@ -4,17 +4,21 @@
 A thin adapter over threads_core (packaged beside this file). `init [user]`
 creates a scope; every other subcommand works on the scope resolved from the
 current directory, runs the core's upkeep first, and is silent when no scope
-exists. `ack <id>|all` acknowledges retirement notices, after the agent has
-told the user about them.
+exists. `start` prints the briefing (its data sections: the rules are in
+SKILL.md). `ack <id>|all` acknowledges retirement notices, after the agent
+has told the user about them.
 """
 import os
+import shlex
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import threads_core  # noqa: E402
 
-USAGE = "usage: threads init [user] | threads regen | threads ack <id>|all\n"
+USAGE = "usage: threads init [user] | threads start | threads regen | threads ack <id>|all\n"
+
+SCRIPT = os.path.abspath(__file__)
 
 
 def cmd_init(args):
@@ -24,6 +28,21 @@ def cmd_init(args):
     created, text = threads_core.run_init(os.getcwd(), user=bool(args))
     sys.stdout.write(text)
     return 0 if created else 1
+
+
+def ack_command(scope, target):
+    """The exact shell command line that acknowledges `target` in `scope`."""
+    return "cd %s && python3 %s ack %s" % (shlex.quote(scope.root), shlex.quote(SCRIPT), target)
+
+
+def cmd_start(scope, args):
+    if args:
+        sys.stderr.write(USAGE)
+        return 2
+    result = threads_core.upkeep(scope)
+    brief = threads_core.briefing(scope, result, lambda t: ack_command(scope, t))
+    sys.stdout.write(brief.text())
+    return 0
 
 
 def cmd_regen(scope, args):
@@ -40,7 +59,7 @@ def cmd_ack(scope, args):
     return 0
 
 
-COMMANDS = {"regen": cmd_regen, "ack": cmd_ack}
+COMMANDS = {"start": cmd_start, "regen": cmd_regen, "ack": cmd_ack}
 
 
 def main(argv):

@@ -288,14 +288,119 @@ notice queued by one is shown and acknowledged by the other. Entries whose
 name is not a valid id are ignored. A notice stays queued, and is shown at
 every session start, until an agent acknowledges it after telling the user.
 
+## Briefing
+
+Every session opens with a **briefing**, built after the upkeep from the
+resolved scope. Its **data sections** are identical whichever
+implementation printed them, except for the acknowledge command lines
+(below); an implementation may insert its own agent-facing text
+(instructions, not contract) between the urgent sections and the listing,
+and nowhere else.
+
+### Thresholds
+
+Fixed, not configurable; days are calendar days on the local date,
+counted from `touched`, and compared strictly:
+
+- An `open` thread is **stale** when idle more than 14 days (touched on the
+  1st: still fresh on the 15th, stale on the 16th); a `deferred` one when
+  idle more than 45 days. Other states are never stale.
+- A `touched` that is not a valid `YYYY-MM-DD` date counts as stale; one in
+  the future does not.
+- A **merge review** is proposed when more than 25 threads of `.threads/`
+  are active and not anomalies (`proposed` + `open` + `deferred`, counted
+  after retirement).
+
+### Sections
+
+The data sections come in this order, each present only when it has
+something to say; each ends with LF and they are separated by one empty
+line (`⏎`). With `⏎` marking each line end:
+
+1. **Retired proposals**, one entry per queued notice (§ Retirement
+   notices), by id:
+
+   ```
+   # Retired proposals⏎
+   ⏎
+   These proposed threads went unconfirmed for more than 3 days and were moved⏎
+   to `.threads/history/expired/`. Tell the user about each one (moving the file⏎
+   back to `.threads/` restores it); only after telling them, acknowledge it by⏎
+   running the command shown, as is.⏎
+   ⏎
+   ```
+
+   then per notice `` - `<id>` — <question>⏎ `` (just `` - `<id>`⏎ `` when
+   `.threads/history/expired/` holds no thread with that id) followed by
+   `` ␣␣ack: `<command>`⏎ `` (two spaces); then, with more than one
+   notice, `⏎` and `` All at once: `<command>`⏎ ``.
+2. **Anomalies**, every anomaly of the scope (§ Anomalies), by path:
+
+   ```
+   # Anomalies⏎
+   ⏎
+   These files are not read as threads and are never fixed automatically:⏎
+   tell the user, who fixes them by hand.⏎
+   ⏎
+   ```
+
+   then one `` - `<path>` — <reason>⏎ `` per anomaly, as in `THREADS.md`.
+3. **Contract-version warning**: reserved for the read-only mode of a scope
+   with a newer contract; empty until that rule lands.
+4. **Merge review**, when due, with `<n>` the active count:
+
+   ```
+   # Merge review⏎
+   ⏎
+   <n> threads are active, more than 25. Look for threads that overlap and⏎
+   propose merges to the user; merge only what the user approves.⏎
+   ```
+
+5. **Stale threads**, by id:
+
+   ```
+   # Stale threads⏎
+   ⏎
+   These threads have not been touched for a long time (`open` for more than⏎
+   14 days, `deferred` for more than 45). Ask the user whether each one still⏎
+   matters, then update or close it.⏎
+   ⏎
+   ```
+
+   then one `` - `<id>` (<status>, touched <touched>) — <question>⏎ `` per
+   stale thread, `<touched>` as written in the file.
+6. **Listing**, always present, with `<Kind>` `Project` or `User` and
+   `<root>` the scope root's absolute path:
+
+   ```
+   # Active threads⏎
+   ⏎
+   <Kind> scope at <root>; paths are relative to it.⏎
+   ```
+
+   followed by the state groups of `THREADS.md` (or its
+   `⏎No active threads.⏎`), exactly as in § `THREADS.md`, except that an
+   implementation may shorten a long `leaning` and cut the listing's
+   entries to fit its own limits, saying so in a marker line.
+
+Sections 1–5 are the **urgent** sections: they come before anything an
+implementation inserts and are never cut.
+
+Each notice's `<command>` is the exact shell command line the agent runs to
+acknowledge it (`ack <id>`, or `ack all` for the last line) through that
+implementation, starting with `cd <scope root> && `; paths in it are
+shell-quoted. It is the one implementation-specific text of the data
+sections.
+
 ## Operations
 
-Every operation on a scope (upkeep and acknowledge) runs the upkeep first.
-Every implementation must offer:
+Every operation on a scope (upkeep, briefing and acknowledge) runs the
+upkeep first. Every implementation must offer:
 
 - **Upkeep**: retire every expired proposal (§ Retirement), then rebuild the
   generated files of the resolved scope. It writes nothing else: other
   thread files, anomalies included, are left untouched.
+- **Briefing** (`start`): the briefing's data sections (§ Briefing).
 - **Acknowledge notices** (`ack <id>` or `ack all`): delete the notice of
   `<id>`, or every queued notice, after the upkeep. Acknowledging a notice
   that is not queued is not an error (it may have been acknowledged through

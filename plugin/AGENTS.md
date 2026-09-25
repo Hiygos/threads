@@ -31,8 +31,14 @@ here), so it must work on its own, with nothing from the rest of the repo.
   (`CONTRACT.md` § Scope resolution); every hook is silent when none exists.
 - `guard.sh` uses shell builtins only (it must run with a bare `PATH`).
 - Hooks so far: SessionStart (every source) runs the core's upkeep and
-  injects as `additionalContext` the queued retirement notices first, then
-  `THREADS.md`'s text (anomalies, then the listing).
+  injects as `additionalContext` the briefing (`CONTRACT.md` § Briefing):
+  the core's urgent sections, then the always-on rules (`RULES` in
+  `hook.py`: adapter text, not contract; ~1.5k chars), then the listing.
+- `CONTEXT_CAP` (10,000 characters) and `LEANING_MAX` are `hook.py`
+  constants. Only the listing is cut to fit: whole entry lines from its end,
+  never its header, replaced by one marker line pointing at `THREADS.md`.
+  Urgent sections and rules are never cut, so when they alone exceed the
+  cap the context does too.
 - Each retirement notice carries the exact command line the agent runs to
   acknowledge it: `cd <scope root> && sh <absolute path of guard.sh> ack <id>`
   (paths shell-quoted), built from the installed plugin's own location,

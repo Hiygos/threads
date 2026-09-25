@@ -23,15 +23,45 @@ import threads_core  # noqa: E402
 
 GUARD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guard.sh")
 
-RETIREMENTS_HEADER = (
-    "# Retired proposals\n"
-    "\n"
-    "These proposed threads went unconfirmed for more than 3 days and were moved\n"
-    "to `.threads/history/expired/`. Tell the user about each one (moving the file\n"
-    "back to `.threads/` restores it); only after telling them, acknowledge it by\n"
-    "running the command shown, as is.\n"
-    "\n"
+# Plugin-internal limits: Claude Code's cap on `additionalContext`, and the
+# length a `leaning` is cut to in the injected listing.
+CONTEXT_CAP = 10000
+LEANING_MAX = 200
+
+# The listing's heading, blank line and scope line: never cut.
+LISTING_HEADER_LINES = 3
+
+TRUNCATED = (
+    "\n[Listing truncated to fit the session context: %d more lines. "
+    "The full list is in THREADS.md at the scope root.]\n"
 )
+
+# The always-on rules, injected between the urgent sections and the listing.
+RULES = """# Working with threads
+
+A thread is an open question with a provisional position, kept in `.threads/`
+across sessions until an outcome is declared. It is not a task (work with no
+position to hold), not a decision (nothing left open) and not a fact (true
+regardless of the work in progress): those belong elsewhere.
+
+- Open a thread when a choice stays unresolved beyond the current exchange and
+  there is a position worth keeping on it.
+- The initial state records who decided it is a thread: `proposed` when you
+  open it on your own initiative (tell the user in one line), `open` when the
+  user asked for it. Before creating one, look for its id in `.threads/`,
+  `.threads/history/` and `.threads/history/expired/`, and reopen an existing
+  thread instead.
+- When your position changes, update `leaning` and `touched` and append a
+  dated note; never rewrite earlier notes. Re-read a thread file right before
+  editing it. Write a thread's content in the language of the conversation.
+- Never edit `THREADS.md` or an archive's `INDEX.md`: they are rebuilt from
+  the thread files.
+- A state change is an edit of `status` and `touched`. For anything beyond it
+  (closing, deferring, rejecting, merging, reopening, fixing an anomaly), load
+  the threads skill first.
+- Phrase every open choice you put to the user as a question, so that it can
+  be kept.
+"""
 
 
 def ack_command(scope, target):
@@ -39,26 +69,29 @@ def ack_command(scope, target):
     return "cd %s && sh %s ack %s" % (shlex.quote(scope.root), shlex.quote(GUARD), target)
 
 
-def retirements(scope, result):
-    """The retirement notices section of the briefing; empty with none queued."""
-    ids = threads_core.pending_notices(scope)
-    if not ids:
-        return ""
-    questions = {t.id: t.question for t in result.expired}
-    out = [RETIREMENTS_HEADER]
-    for thread_id in ids:
-        question = questions.get(thread_id)
-        out.append("- `%s`%s\n  ack: `%s`\n" % (
-            thread_id, " — %s" % question if question else "", ack_command(scope, thread_id)))
-    if len(ids) > 1:
-        out.append("\nAll at once: `%s`\n" % ack_command(scope, "all"))
-    return "".join(out) + "\n"
+def fit_listing(listing, room):
+    """`listing` cut at a line boundary, with the marker line, to fit `room` characters.
+
+    Its header (heading and scope line) is always kept.
+    """
+    if len(listing) <= room:
+        return listing
+    lines = listing.splitlines(True)
+    keep = min(LISTING_HEADER_LINES, len(lines))
+    for n in range(len(lines) - 1, keep - 1, -1):
+        marker = TRUNCATED % (len(lines) - n)
+        if n == keep or len("".join(lines[:n])) + len(marker) <= room:
+            return "".join(lines[:n]) + marker
+    return listing
 
 
 def session_start(scope, payload):
-    # Retirement notices first, then THREADS.md's text (anomalies, listing).
+    # Urgent sections first, then the rules, then the listing: the only part
+    # cut to stay within the cap.
     result = threads_core.upkeep(scope)
-    context = retirements(scope, result) + threads_core.render_index(result)
+    brief = threads_core.briefing(scope, result, lambda t: ack_command(scope, t), LEANING_MAX)
+    fixed = len(brief.text(RULES, listing=""))
+    context = brief.text(RULES, listing=fit_listing(brief.listing, CONTEXT_CAP - fixed))
     return {"hookSpecificOutput": {"hookEventName": "SessionStart",
                                    "additionalContext": context}}
 

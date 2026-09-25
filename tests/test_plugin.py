@@ -1,4 +1,5 @@
 """Plugin adapter tests: the `sh` guard and SessionStart, through hook I/O only."""
+import importlib.util
 import json
 import os
 import shutil
@@ -6,12 +7,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from tests.core_import import threads_core as core
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLUGIN = os.path.join(REPO, "plugin")
 INACTIVE = "threads is inactive: Python ≥3.9 not found"
+TODAY = "2026-01-03"
 SOURCES = ("startup", "resume", "compact", "clear")
 THREAD = "---\nid: sample\nstatus: open\nopened: 2026-01-01\ntouched: 2026-01-02\nquestion: Which cache?\n---\n"
 
@@ -53,7 +56,7 @@ class PluginHooks(unittest.TestCase):
             payload["source"] = source
         # An isolated HOME: a real user scope on the machine is never read.
         env = dict(os.environ, PATH=self.bin, HOME=os.path.join(self.tmp.name, "home"),
-                   TZ="UTC", THREADS_TODAY="2026-01-03")
+                   TZ="UTC", THREADS_TODAY=TODAY)
         env.pop("THREADS_USER_ROOT", None)
         proc = subprocess.run(
             ["/bin/sh", os.path.join(self.plugin, "scripts", "guard.sh"), event],
@@ -79,8 +82,36 @@ class PluginHooks(unittest.TestCase):
         self.assertEqual(output["hookEventName"], "SessionStart")
         return output["additionalContext"]
 
+    def scope(self):
+        return core.resolve_scope(self.work, {"HOME": os.path.join(self.tmp.name, "home")})
+
+    def plugin_module(self):
+        """The copied plugin's hook.py, for its constants and ack command line."""
+        path = os.path.join(self.plugin, "scripts", "hook.py")
+        spec = importlib.util.spec_from_file_location("threads_hook_under_test", path)
+        module = importlib.util.module_from_spec(spec)
+        saved, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.dont_write_bytecode = saved
+            sys.path[:] = [p for p in sys.path if p != os.path.dirname(path)]
+        return module
+
+    def briefing(self, leaning_max=None):
+        """The briefing's data sections for the scope as it is now (after upkeep)."""
+        scope = self.scope()
+        hook = self.plugin_module()
+        with mock.patch.dict(os.environ, THREADS_TODAY=TODAY):
+            return core.briefing(scope, core.scan(scope), lambda t: hook.ack_command(scope, t),
+                                 leaning_max)
+
     def listing(self):
-        return core.render_index(core.scan(core.resolve_scope(self.work, {"HOME": os.path.join(self.tmp.name, "home")})))
+        return self.briefing().listing
+
+    def write(self, name, text):
+        with open(os.path.join(self.work, ".threads", name), "w", encoding="utf-8") as f:
+            f.write(text)
 
     def tree(self, root):
         return sorted(os.path.relpath(os.path.join(d, n), root)
@@ -108,10 +139,8 @@ class PluginHooks(unittest.TestCase):
             with open(path, "wb") as f:
                 f.write(data)
         context = self.context(self.hook())
-        self.assertIn("\n## Anomalies\n", context)
         for rel in (".threads/Broken.md", ".threads/history/sample.md", ".threads/sample.md"):
-            self.assertIn("- `%s` — " % rel, context)
-        self.assertIn(self.listing(), context)
+            self.assertLess(context.index("- `%s` — " % rel), context.index(self.listing()))
         for path, data in broken.items():
             with open(path, "rb") as f:
                 self.assertEqual(f.read(), data)
@@ -123,7 +152,7 @@ class PluginHooks(unittest.TestCase):
             f.write("---\nid: old-idea\nstatus: proposed\nopened: 2025-12-01\n"
                     "touched: 2025-12-01\nquestion: Which log level?\n---\n")
         context = self.context(self.hook())
-        self.assertLess(context.index("old-idea"), context.index("# THREADS"))
+        self.assertLess(context.index("old-idea"), context.index(self.listing()))
         self.assertIn(self.listing(), context)
         commands = [line.split("`")[1] for line in context.splitlines()
                     if line.strip().startswith("ack: `")]
@@ -138,6 +167,62 @@ class PluginHooks(unittest.TestCase):
         self.assertEqual(os.listdir(os.path.join(self.work, ".threads", ".state", "notices")), [])
         self.assertNotIn("ack: `", self.context(self.hook()))
 
+    def test_briefing_order_rules_then_listing(self):
+        self.real("python3")
+        self.add_scope()
+        hook = self.plugin_module()
+        context = self.context(self.hook())
+        self.assertEqual(context, self.briefing(hook.LEANING_MAX).text(hook.RULES))
+        self.assertLess(context.index(hook.RULES), context.index(self.listing()))
+
+    def test_urgent_parts_and_rules_survive_the_cap(self):
+        self.real("python3")
+        self.add_scope()
+        hook = self.plugin_module()
+        # One retirement, one anomaly, one stale thread, a merge review, and a
+        # listing far longer than the cap.
+        self.write("old-idea.md", "---\nid: old-idea\nstatus: proposed\nopened: 2025-12-01\n"
+                   "touched: 2025-12-01\nquestion: Which log level?\n---\n")
+        self.write("Broken.md", "no frontmatter\n")
+        self.write("forgotten.md", THREAD.replace("sample", "forgotten").replace(
+            "2026-01-02", "2025-11-01"))
+        for n in range(200):
+            self.write("topic-%03d.md" % n, THREAD.replace("sample", "topic-%03d" % n).replace(
+                "Which cache?", "Which option for topic %d, given everything said so far? " % n * 2))
+        context = self.context(self.hook())
+        brief = self.briefing(hook.LEANING_MAX)
+        self.assertLessEqual(len(context), hook.CONTEXT_CAP)
+        self.assertEqual(len(brief.urgent), 4)  # Retirements, anomalies, merge review, stale.
+        fixed = "\n".join(brief.urgent + [hook.RULES]) + "\n"
+        self.assertTrue(context.startswith(fixed))
+        listing = context[len(fixed):].splitlines(True)
+        self.assertEqual(listing[-2], "\n")  # The marker line stands apart.
+        self.assertIn("THREADS.md", listing[-1])
+        self.assertNotIn(listing[-1], brief.listing)
+        self.assertTrue(brief.listing.startswith("".join(listing[:-2])))
+        self.assertGreater(len(listing), 10)
+
+    def test_listing_not_truncated_below_the_cap(self):
+        self.real("python3")
+        self.add_scope()
+        hook = self.plugin_module()
+        context = self.context(self.hook())
+        self.assertTrue(context.endswith(self.listing()))
+        self.assertLess(len(context), hook.CONTEXT_CAP)
+
+    def test_long_leaning_cut_in_the_listing_only(self):
+        self.real("python3")
+        self.add_scope()
+        hook = self.plugin_module()
+        leaning = "x" * (hook.LEANING_MAX * 2)
+        self.write("sample.md", THREAD.replace("---\n", "leaning: %s\n---\n" % leaning, 2)
+                   .replace("leaning: %s\n---\nid" % leaning, "---\nid"))
+        context = self.context(self.hook())
+        self.assertNotIn(leaning, context)
+        self.assertIn("  - leaning: %s…\n" % ("x" * (hook.LEANING_MAX - 1)), context)
+        with open(os.path.join(self.work, "THREADS.md"), encoding="utf-8") as f:
+            self.assertIn(leaning, f.read())
+
     def test_ack_python_missing(self):
         env = dict(os.environ, PATH=self.bin, HOME=os.path.join(self.tmp.name, "home"))
         proc = subprocess.run(
@@ -150,7 +235,7 @@ class PluginHooks(unittest.TestCase):
         self.add_scope()
         self.hook()
         with open(os.path.join(self.work, "THREADS.md"), encoding="utf-8") as f:
-            self.assertEqual(f.read(), self.listing())
+            self.assertEqual(f.read(), core.render_index(core.scan(self.scope())))
 
     def test_no_scope_no_output(self):
         self.real("python3")

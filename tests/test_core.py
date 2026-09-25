@@ -382,6 +382,43 @@ class Retirement(unittest.TestCase):
             core.ack(self.scope, "../p")
 
 
+class Briefing(unittest.TestCase):
+    """Edges the conformance cases leave out; the thresholds are covered there."""
+
+    def thread(self, **extra):
+        fields = dict(VALID)
+        fields.update(extra)
+        return core.Thread("x.md", fields)
+
+    def test_stale_only_open_and_deferred(self):
+        now = core.parse_date("2026-06-01")
+        for status in ("proposed", "resolved", "abandoned", "merged"):
+            with self.subTest(status=status):
+                self.assertFalse(core.is_stale(self.thread(status=status), now))
+        self.assertTrue(core.is_stale(self.thread(status="deferred"), now))
+
+    def test_unreadable_touched_is_stale(self):
+        for value in ("2026-02-30", "soon", "2026-1-1"):
+            with self.subTest(touched=value):
+                self.assertTrue(core.is_stale(self.thread(touched=value),
+                                              core.parse_date("2026-01-03")))
+
+    def test_leaning_cut_only_when_asked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.mkdir(os.path.join(tmp, ".threads"))
+            with open(os.path.join(tmp, ".threads", "a.md"), "w", encoding="utf-8") as f:
+                f.write(thread_text(**dict(VALID, leaning="abcdefghij")))
+            scope = core.resolve_scope(tmp, {"HOME": os.path.join(tmp, "no-home")})
+            result = core.scan(scope)
+            self.assertIn("leaning: abcdefghij\n", core.briefing(scope, result, str).listing)
+            self.assertIn("leaning: abcd…\n", core.briefing(scope, result, str, 5).listing)
+
+    def test_text_joins_sections_with_one_blank_line(self):
+        brief = core.Briefing(["# A\n", "# B\n"], "# L\n")
+        self.assertEqual(brief.text(), "# A\n\n# B\n\n# L\n")
+        self.assertEqual(brief.text("# R\n", listing="# M\n"), "# A\n\n# B\n\n# R\n\n# M\n")
+
+
 class Today(unittest.TestCase):
     def test_forced_clock(self):
         os.environ["THREADS_TODAY"] = "2026-05-04"

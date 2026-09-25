@@ -1,0 +1,8 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "start"
+  ],
+  "stdout": "# Stale threads\n\nThese threads have not been touched for a long time (`open` for more than\n14 days, `deferred` for more than 45). Ask the user whether each one still\nmatters, then update or close it.\n\n- `deferred-day-forty-six` (deferred, touched 2026-01-23) — Move to a new CI provider?\n- `open-day-fifteen` (open, touched 2026-02-23) — Which retry policy?\n- `open-touched-unreadable` (open, touched last week) — Which log format?\n\n# Active threads\n\nProject scope at {sandbox}; paths are relative to it.\n\n## Open\n\n- **[open-day-fifteen](.threads/open-day-fifteen.md)** — Which retry policy?\n- **[open-day-fourteen](.threads/open-day-fourteen.md)** — Which queue backend?\n  - leaning: The managed one.\n- **[open-touched-future](.threads/open-touched-future.md)** — Which date library?\n- **[open-touched-unreadable](.threads/open-touched-unreadable.md)** — Which log format?\n\n## Deferred\n\n- **[deferred-day-forty-five](.threads/deferred-day-forty-five.md)** — Split the monorepo?\n- **[deferred-day-forty-six](.threads/deferred-day-forty-six.md)** — Move to a new CI provider?\n\n## Proposed (awaiting confirmation)\n\n- **[proposed-old-touched](.threads/proposed-old-touched.md)** — Rename the config file?\n",
+  "refusal": null
+}

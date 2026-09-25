@@ -30,6 +30,13 @@ REQUIRED_FIELDS = ("id", "status", "opened", "touched", "question")
 # calendar days (CONTRACT.md § Retirement). Fixed, not configurable.
 PROPOSED_TTL_DAYS = 3
 
+# Stale thresholds (CONTRACT.md § Briefing): idle days from `touched`,
+# strictly greater. Fixed, not configurable.
+STALE_DAYS = {"open": 14, "deferred": 45}
+
+# A merge review is proposed when more active threads than this exist.
+MERGE_REVIEW_OVER = 25
+
 # The dated note retirement appends, under `## <date>` (normative).
 RETIREMENT_NOTE = "Retired: unconfirmed for more than 3 days.\n"
 
@@ -79,6 +86,47 @@ ANOMALIES_HEADER = (
     "\n"
     "> These files are not read as threads and are left untouched: fix them by hand.\n"
     "\n"
+)
+
+# Fixed text of the briefing's data sections (normative, CONTRACT.md § Briefing).
+BRIEFING_RETIREMENTS_HEADER = (
+    "# Retired proposals\n"
+    "\n"
+    "These proposed threads went unconfirmed for more than 3 days and were moved\n"
+    "to `.threads/history/expired/`. Tell the user about each one (moving the file\n"
+    "back to `.threads/` restores it); only after telling them, acknowledge it by\n"
+    "running the command shown, as is.\n"
+    "\n"
+)
+
+BRIEFING_ANOMALIES_HEADER = (
+    "# Anomalies\n"
+    "\n"
+    "These files are not read as threads and are never fixed automatically:\n"
+    "tell the user, who fixes them by hand.\n"
+    "\n"
+)
+
+BRIEFING_MERGE_REVIEW = (
+    "# Merge review\n"
+    "\n"
+    "%d threads are active, more than 25. Look for threads that overlap and\n"
+    "propose merges to the user; merge only what the user approves.\n"
+)
+
+BRIEFING_STALE_HEADER = (
+    "# Stale threads\n"
+    "\n"
+    "These threads have not been touched for a long time (`open` for more than\n"
+    "14 days, `deferred` for more than 45). Ask the user whether each one still\n"
+    "matters, then update or close it.\n"
+    "\n"
+)
+
+BRIEFING_LISTING_HEADER = (
+    "# Active threads\n"
+    "\n"
+    "%s scope at %s; paths are relative to it.\n"
 )
 
 _KEY_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
@@ -485,10 +533,13 @@ def render_anomalies(anomalies):
         "- `%s` — %s\n" % (a.rel, a.reason) for a in anomalies)
 
 
-def render_index(scan):
-    """The normative text of THREADS.md for a ScopeScan: anomalies, then active threads."""
-    threads = scan.active
-    out = [INDEX_HEADER, render_anomalies(scan.anomalies)]
+def _active_groups(threads, leaning_max=None):
+    """The state groups of THREADS.md, or its "no active threads" line.
+
+    `leaning_max` (adapter-internal, never for generated files) shortens a
+    longer `leaning` to that many characters, ending in `…`.
+    """
+    out = []
     for state, label in INDEX_GROUPS:
         rows = [t for t in threads if t.status == state]
         if not rows:
@@ -496,11 +547,19 @@ def render_index(scan):
         out.append("\n## %s\n\n" % label)
         for t in rows:
             out.append(_entry(t, "%s/%s.md" % (THREADS_DIR, t.id)))
-            if t.leaning:
-                out.append("  - leaning: %s\n" % t.leaning)
+            leaning = t.leaning
+            if leaning_max is not None and len(leaning) > leaning_max:
+                leaning = leaning[:max(leaning_max - 1, 0)] + "…"
+            if leaning:
+                out.append("  - leaning: %s\n" % leaning)
     if not threads:
         out.append("\nNo active threads.\n")
     return "".join(out)
+
+
+def render_index(scan):
+    """The normative text of THREADS.md for a ScopeScan: anomalies, then active threads."""
+    return INDEX_HEADER + render_anomalies(scan.anomalies) + _active_groups(scan.active)
 
 
 def render_contract():
@@ -736,3 +795,85 @@ def ack_text(done, target):
     if target == "all":
         return "No retirement notice is queued\n"
     return "No retirement notice is queued for %s\n" % target
+
+
+def is_stale(thread, now=None):
+    """True for an `open` or `deferred` thread idle longer than its threshold.
+
+    Idle days count from `touched`, strictly greater; an unreadable
+    `touched` counts as stale, one in the future does not.
+    """
+    limit = STALE_DAYS.get(thread.status)
+    if limit is None:
+        return False
+    touched = parse_date(thread.fields.get("touched"))
+    if touched is None:
+        return True
+    return ((now or today()) - touched).days > limit
+
+
+def _contract_warning(scope):
+    """The contract-version warning section: its slot in the briefing, empty for now."""
+    return ""
+
+
+class Briefing:
+    """The briefing's data sections for one scope, as adapters compose them.
+
+    `urgent` is the list of urgent sections, in order (retirements,
+    anomalies, contract-version warning, merge review, stale threads), each
+    present only when it has something to say; `listing` is the active
+    threads. Each section is text ending in LF; sections are joined by one
+    blank line. Adapters insert their own text (the rules) between the
+    urgent sections and the listing, and may truncate the listing only.
+    """
+
+    def __init__(self, urgent, listing):
+        self.urgent = urgent
+        self.listing = listing
+
+    def text(self, rules="", listing=None):
+        """The whole briefing: urgent sections, `rules` when given, the listing."""
+        parts = self.urgent + ([rules] if rules else [])
+        parts.append(self.listing if listing is None else listing)
+        return "\n".join(parts)
+
+
+def _retirements(scope, result, ack_command):
+    ids = pending_notices(scope)
+    if not ids:
+        return ""
+    questions = {t.id: t.question for t in result.expired}
+    out = [BRIEFING_RETIREMENTS_HEADER]
+    for thread_id in ids:
+        question = questions.get(thread_id)
+        out.append("- `%s`%s\n  ack: `%s`\n" % (
+            thread_id, " — %s" % question if question else "", ack_command(thread_id)))
+    if len(ids) > 1:
+        out.append("\nAll at once: `%s`\n" % ack_command("all"))
+    return "".join(out)
+
+
+def briefing(scope, result, ack_command, leaning_max=None):
+    """The Briefing of `scope` from `result`, the scan its upkeep returned.
+
+    `ack_command(target)` is the adapter's exact command line that
+    acknowledges `target` (an id or "all"); `leaning_max` is the adapter's
+    own `leaning` truncation for the listing (None: none).
+    """
+    now = today()
+    urgent = [_retirements(scope, result, ack_command)]
+    if result.anomalies:
+        urgent.append(BRIEFING_ANOMALIES_HEADER + "".join(
+            "- `%s` — %s\n" % (a.rel, a.reason) for a in result.anomalies))
+    urgent.append(_contract_warning(scope))
+    if len(result.active) > MERGE_REVIEW_OVER:
+        urgent.append(BRIEFING_MERGE_REVIEW % len(result.active))
+    stale = [t for t in result.active if is_stale(t, now)]
+    if stale:
+        urgent.append(BRIEFING_STALE_HEADER + "".join(
+            "- `%s` (%s, touched %s) — %s\n" % (t.id, t.status, t.fields["touched"], t.question)
+            for t in stale))
+    listing = (BRIEFING_LISTING_HEADER % (scope.kind.capitalize(), scope.root)
+               + _active_groups(result.active, leaning_max))
+    return Briefing([u for u in urgent if u], listing)
