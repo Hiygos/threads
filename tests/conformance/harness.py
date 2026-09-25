@@ -24,6 +24,11 @@ separated):
   sandbox (so the machine's real home is never read or written) and
   `THREADS_USER_ROOT` is unset unless given here.
 - `silent`: true when every adapter must write nothing to stdout or stderr.
+- `prepare`: an operation line run first, in the start directory, through
+  the *other* adapter (the plugin when the skill is under test, and the
+  reverse); it must exit 0 and its output is not compared. It checks that
+  what one implementation leaves on disk (a queued notice, a retirement)
+  is read and handled the same by the other.
 
 `.git` entries are left out of the comparison. Cases using `git` or
 `worktrees` are skipped when the `git` binary is missing.
@@ -39,15 +44,20 @@ Adapters:
     `hookSpecificOutput` compared with `stdout`, or None when the hook's
     output has no counterpart of the skill's stdout, in which case only the
     exit code and the files on disk are compared. `regen` maps to
-    SessionStart, which regenerates the generated files before injecting the
-    listing; the listing itself is not the skill's `regen` output, so it is
-    not compared here.
+    SessionStart, which runs the upkeep before injecting the briefing; the
+    briefing itself is not the skill's `regen` output, so it is not compared
+    here.
   - `("skill", name)`: the command a plugin skill's body runs through `!`
     injection (`sh guard.sh <name> <operation arguments>`), whose stdout is
     compared with `stdout`. Such a command exits 0 on a refusal too (a
     non-zero exit makes Claude Code fail the skill instead of showing the
     outcome), so only the skill adapter's refusals must exit non-zero.
     `init` maps to `/threads:init`'s command.
+  - `("command", name)`: a command the agent runs itself through the shell
+    (`sh guard.sh <name> <operation arguments>`), as the plugin's injected
+    text tells it to; stdout is compared with `stdout`, and a refusal exits
+    non-zero as in the skill adapter. `ack` maps to the command line
+    SessionStart gives for each retirement notice.
 """
 import json
 import os
@@ -65,6 +75,7 @@ PLUGIN_GUARD = os.path.join(REPO, "plugin", "scripts", "guard.sh")
 PLUGIN_ENTRIES = {
     "regen": ("hook", "SessionStart", None),
     "init": ("skill", "init"),
+    "ack": ("command", "ack"),
 }
 
 KEEP = ".gitkeep"
@@ -118,25 +129,26 @@ def base_env(case, sandbox, home):
     return env
 
 
-def run_skill(start, env, case):
+def run_skill(start, env, case, operation=None):
     proc = subprocess.run(
-        [sys.executable, SKILL_SCRIPT] + case["operation"],
+        [sys.executable, SKILL_SCRIPT] + (operation or case["operation"]),
         cwd=start, env=env, capture_output=True,
     )
     out = proc.stdout.decode("utf-8")
     return Result(proc.returncode, out, proc.stderr.decode("utf-8"), out)
 
 
-def run_plugin(start, env, case):
-    entry = PLUGIN_ENTRIES[case["operation"][0]]
-    if entry[0] == "skill":
+def run_plugin(start, env, case, operation=None):
+    operation = operation or case["operation"]
+    entry = PLUGIN_ENTRIES[operation[0]]
+    if entry[0] in ("skill", "command"):
         proc = subprocess.run(
-            ["sh", PLUGIN_GUARD, entry[1]] + case["operation"][1:],
+            ["sh", PLUGIN_GUARD, entry[1]] + operation[1:],
             cwd=start, env=env, capture_output=True, stdin=subprocess.DEVNULL,
         )
         out = proc.stdout.decode("utf-8")
         return Result(proc.returncode, out, proc.stderr.decode("utf-8"), out,
-                      refusal_exits_nonzero=False)
+                      refusal_exits_nonzero=entry[0] == "command")
     _, event, field = entry
     payload = {"session_id": "conformance", "hook_event_name": event, "cwd": start}
     if event == "SessionStart":
@@ -242,6 +254,11 @@ def run_case(name, adapter):
         if needs_git(case):
             setup_git(sandbox, case, env)
         start = os.path.join(sandbox, *case.get("cwd", ".").split("/"))
+        if case.get("prepare"):
+            other = [a for a in sorted(ADAPTERS) if a != adapter][0]
+            prepared = ADAPTERS[other](start, env, case, case["prepare"])
+            if prepared.code != 0:
+                raise AssertionError("prepare failed through %s: %s" % (other, prepared.stderr))
         result = ADAPTERS[adapter](start, env, case)
         result.normalize([(sandbox, "{sandbox}"), (home, "{home}")])
         tree = snapshot(sandbox)

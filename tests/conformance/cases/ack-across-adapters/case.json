@@ -1,0 +1,12 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "ack",
+    "stale-proposal"
+  ],
+  "stdout": "Acknowledged the retirement notice of stale-proposal\n",
+  "refusal": null,
+  "prepare": [
+    "regen"
+  ]
+}

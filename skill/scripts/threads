@@ -3,7 +3,9 @@
 
 A thin adapter over threads_core (packaged beside this file). `init [user]`
 creates a scope; every other subcommand works on the scope resolved from the
-current directory and is silent when no scope exists.
+current directory, runs the core's upkeep first, and is silent when no scope
+exists. `ack <id>|all` acknowledges retirement notices, after the agent has
+told the user about them.
 """
 import os
 import sys
@@ -12,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import threads_core  # noqa: E402
 
-USAGE = "usage: threads init [user] | threads regen\n"
+USAGE = "usage: threads init [user] | threads regen | threads ack <id>|all\n"
 
 
 def cmd_init(args):
@@ -25,11 +27,20 @@ def cmd_init(args):
 
 
 def cmd_regen(scope, args):
-    threads_core.regenerate(scope)
+    threads_core.upkeep(scope)
     return 0
 
 
-COMMANDS = {"regen": cmd_regen}
+def cmd_ack(scope, args):
+    if len(args) != 1 or not (args[0] == "all" or threads_core.valid_id(args[0])):
+        sys.stderr.write(USAGE)
+        return 2
+    done = threads_core.ack(scope, args[0])
+    sys.stdout.write(threads_core.ack_text(done, args[0]))
+    return 0
+
+
+COMMANDS = {"regen": cmd_regen, "ack": cmd_ack}
 
 
 def main(argv):

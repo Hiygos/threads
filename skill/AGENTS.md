@@ -17,7 +17,9 @@ own, with nothing from the rest of the repo.
 - The script has the core resolve the scope from the current directory
   (`CONTRACT.md` § Scope resolution) and is silent when none exists; `init`
   is the exception, since it creates one.
-- Subcommands so far: `init [user]` (exits 1 on a refusal), `regen`.
+- Subcommands so far: `init [user]` (exits 1 on a refusal), `regen`,
+  `ack <id>|all` (exits 2 on a target that is neither). Each one except
+  `init` runs the core's upkeep first (`CONTRACT.md` § Operations).
 
 ## Verification
 

@@ -116,6 +116,35 @@ class PluginHooks(unittest.TestCase):
             with open(path, "rb") as f:
                 self.assertEqual(f.read(), data)
 
+    def test_retirement_notices_first_with_a_working_ack_command(self):
+        self.real("python3")
+        self.add_scope()
+        with open(os.path.join(self.work, ".threads", "old-idea.md"), "w", encoding="utf-8") as f:
+            f.write("---\nid: old-idea\nstatus: proposed\nopened: 2025-12-01\n"
+                    "touched: 2025-12-01\nquestion: Which log level?\n---\n")
+        context = self.context(self.hook())
+        self.assertLess(context.index("old-idea"), context.index("# THREADS"))
+        self.assertIn(self.listing(), context)
+        commands = [line.split("`")[1] for line in context.splitlines()
+                    if line.strip().startswith("ack: `")]
+        self.assertEqual(len(commands), 1)
+        env = dict(os.environ, PATH=self.bin + os.pathsep + "/usr/bin:/bin",
+                   HOME=os.path.join(self.tmp.name, "home"))
+        env.pop("THREADS_USER_ROOT", None)
+        proc = subprocess.run(["/bin/sh", "-c", commands[0]], cwd=self.tmp.name, env=env,
+                              capture_output=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(b"old-idea", proc.stdout)
+        self.assertEqual(os.listdir(os.path.join(self.work, ".threads", ".state", "notices")), [])
+        self.assertNotIn("ack: `", self.context(self.hook()))
+
+    def test_ack_python_missing(self):
+        env = dict(os.environ, PATH=self.bin, HOME=os.path.join(self.tmp.name, "home"))
+        proc = subprocess.run(
+            ["/bin/sh", os.path.join(self.plugin, "scripts", "guard.sh"), "ack", "all"],
+            cwd=self.work, env=env, capture_output=True, stdin=subprocess.DEVNULL)
+        self.assertEqual((proc.returncode, proc.stdout.decode("utf-8")), (0, INACTIVE + "\n"))
+
     def test_session_start_regenerates_index(self):
         self.real("python3")
         self.add_scope()

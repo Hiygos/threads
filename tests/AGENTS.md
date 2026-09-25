@@ -14,10 +14,12 @@ runs every case against every implementation.
 - `conformance/` — the harness (`harness.py`) and one folder per case under
   `conformance/cases/` (`before/`, `after/`, `case.json`; format in the
   harness docstring, with how each operation maps to a plugin entry point:
-  a hook, or the command a plugin skill runs through `!` injection). A
+  a hook, the command a plugin skill runs through `!` injection, or a
+  command the agent runs itself, such as `ack`). A
   case's fixtures are a sandbox; optional `case.json` keys set the start
   directory (`cwd`), git repos (`git`), linked worktrees (`worktrees`),
-  environment (`env`, `{sandbox}` expanded) and a silence check (`silent`).
+  environment (`env`, `{sandbox}` expanded), a silence check (`silent`)
+  and an operation run first through the other adapter (`prepare`).
   Adapter output is compared with the sandbox path written as `{sandbox}`.
 
 ## Local Contracts

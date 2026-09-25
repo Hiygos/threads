@@ -15,10 +15,11 @@ here), so it must work on its own, with nothing from the rest of the repo.
   reports the output.
 - `scripts/guard.sh` — the `sh` guard: finds Python ≥3.9 (`python3`, then
   `python`) and runs `hook.py`; without one, SessionStart injects the single
-  "inactive" line, `init` prints it as plain text, and every other hook
-  exits 0 silently.
+  "inactive" line, `init` and `ack` print it as plain text, and every other
+  hook exits 0 silently.
 - `scripts/hook.py` — the adapter, a thin layer over the core: hook entry
-  points (`hook.py <HookEventName>`) and `hook.py init [user]`.
+  points (`hook.py <HookEventName>`), `hook.py init [user]` and
+  `hook.py ack <id>|all`.
 - `scripts/threads_core.py` — packaged copy of `core/threads_core.py`; never
   edited here (see `core/AGENTS.md`).
 
@@ -29,9 +30,13 @@ here), so it must work on its own, with nothing from the rest of the repo.
 - The scope is resolved by the core from the hook input's `cwd`
   (`CONTRACT.md` § Scope resolution); every hook is silent when none exists.
 - `guard.sh` uses shell builtins only (it must run with a bare `PATH`).
-- Hooks so far: SessionStart (every source) regenerates the generated files
-  and injects `THREADS.md`'s text (anomalies, then the listing) as
-  `additionalContext`.
+- Hooks so far: SessionStart (every source) runs the core's upkeep and
+  injects as `additionalContext` the queued retirement notices first, then
+  `THREADS.md`'s text (anomalies, then the listing).
+- Each retirement notice carries the exact command line the agent runs to
+  acknowledge it: `cd <scope root> && sh <absolute path of guard.sh> ack <id>`
+  (paths shell-quoted), built from the installed plugin's own location,
+  since `${CLAUDE_PLUGIN_ROOT}` is not in the agent's shell.
 - `/threads:init` resolves from the session's current directory and always
   exits 0, a refusal included: a non-zero exit in `!` injection makes Claude
   Code fail the skill instead of passing the outcome to the model.

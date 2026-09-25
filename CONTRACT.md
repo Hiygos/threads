@@ -25,6 +25,9 @@ below is created on demand.
 - `.threads/.contract` holds the scope's contract version: the version as a
   decimal integer followed by one LF, so `1⏎` (the two bytes `31 0A`) for
   contract 1.
+- `.threads/.state/notices/` is the retirement-notice queue (§ Retirement
+  notices). Everything else under `.threads/.state/` is implementation-private
+  (`.state/plugin/`, `.state/skill/`) and not part of the contract.
 
 ## Scope resolution
 
@@ -70,7 +73,8 @@ read at all.
   are no silent defaults.
 - Dates (`opened`, `touched`, `expired`) are local `YYYY-MM-DD`; a malformed
   date is not an anomaly.
-- Unknown fields are preserved and ignored; implementations never add fields.
+- Unknown fields are preserved and ignored; implementations never add fields,
+  except `expired`, written by retirement only (§ Retirement).
 - The **id** is kebab-case, matching `[a-z0-9]+(-[a-z0-9]+)*` in full, equal to
   the file name without `.md`, and unique across the three folders.
 
@@ -105,13 +109,17 @@ literal):
 | The id differs from the file name              | `` id `<id>` does not match the file name ``       |
 | The status does not belong in the folder       | `` status `<status>` does not belong in `<folder>` `` |
 | Another folder holds a file with the same name | `` id `<id>` also used by `<path>`, `<path>` ``     |
+| An expired proposal's retirement destination exists and is not a thread file | `` cannot be retired: `<path>` already exists `` |
 
 Missing fields are named in the order `id`, `status`, `opened`, `touched`,
 `question`, `merged_into`, `expired`. `<folder>` and `<path>` are relative to
 the scope root and `/`-separated, a folder ending in `/`
 (`.threads/history/`); the other paths are
 sorted in Unicode code point order. Every file sharing a name across folders
-is an anomaly; each reports its own earlier reason if it has one.
+is an anomaly; each reports its own earlier reason if it has one. A
+retirement whose destination is a thread file is therefore reported with the
+shared-name reason, on both files; the last row covers any other entry at the
+destination (a folder, a broken link, …), reported on the active file only.
 
 ## Generated files
 
@@ -230,12 +238,69 @@ index, followed by the `leaning` line when non-empty, then
 With no thread to list, the header is followed by `⏎No closed threads.⏎`
 (history) or `⏎No expired threads.⏎` (expired).
 
+## Retirement
+
+A `proposed` thread in `.threads/` that is not an anomaly **expires** when its
+age exceeds 3 calendar days: today's local date minus its `opened` date is
+greater than 3 days (opened on the 6th: still active on the 9th, expired on
+the 10th). An `opened` that is not a valid `YYYY-MM-DD` date counts as
+expired; an `opened` in the future does not. The TTL is fixed.
+
+Upkeep **retires** every expired thread: it moves `.threads/<id>.md` to
+`.threads/history/expired/<id>.md`, creating that folder when missing, with
+`status: proposed` kept and exactly two changes, everything else kept byte
+for byte (encoding, BOM, line endings, unknown fields, body):
+
+1. The field `expired: <today>` (one line, LF): when the frontmatter already
+   has an `expired` line (a proposal moved back after an earlier
+   retirement), that line is replaced in place; otherwise the line is
+   inserted just before the closing `---`.
+2. A dated note appended at the end of the file: if the file does not end
+   with LF, one LF first; then
+
+   ```
+   ⏎
+   ## <today>⏎
+   ⏎
+   Retired: unconfirmed for more than 3 days.⏎
+   ```
+
+The new file is written through a temp file in the destination folder and
+then given its name without ever replacing an existing entry; only then is
+the source removed. Retirement is idempotent:
+
+- A source that has vanished (moved by another session) counts as done:
+  no error, nothing written, no notice.
+- A destination that exists is never overwritten: the move is refused and
+  the file stays in `.threads/`, reported as an anomaly (§ Anomalies).
+
+A retired file moved back to `.threads/` with one `mv` is a normal thread
+again (its `expired` field is ignored there); still `proposed` with the same
+`opened`, it retires again at the next upkeep unless its status changes.
+
+## Retirement notices
+
+Each retirement queues one notice for the user: an empty file
+`.threads/.state/notices/<id>`, created (with its folders) by the upkeep
+that moved the file, and by no other. Creating the file queues the notice;
+deleting it acknowledges it. The queue is shared by every implementation: a
+notice queued by one is shown and acknowledged by the other. Entries whose
+name is not a valid id are ignored. A notice stays queued, and is shown at
+every session start, until an agent acknowledges it after telling the user.
+
 ## Operations
 
+Every operation on a scope (upkeep and acknowledge) runs the upkeep first.
 Every implementation must offer:
 
-- **Regenerate**: rebuild the generated files of the resolved scope. It
-  writes nothing else: thread files, anomalies included, are left untouched.
+- **Upkeep**: retire every expired proposal (§ Retirement), then rebuild the
+  generated files of the resolved scope. It writes nothing else: other
+  thread files, anomalies included, are left untouched.
+- **Acknowledge notices** (`ack <id>` or `ack all`): delete the notice of
+  `<id>`, or every queued notice, after the upkeep. Acknowledging a notice
+  that is not queued is not an error (it may have been acknowledged through
+  the other implementation); a target that is neither `all` nor a valid id
+  is refused. An id literally named `all` is acknowledged with `ack all`.
 - **Create scope** (`init`), and **create the user scope** (`init user`),
   run on the user's explicit request only:
   - The project scope is created at the git root when the current directory

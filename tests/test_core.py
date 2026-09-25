@@ -94,7 +94,7 @@ class Regenerate(unittest.TestCase):
         fields = dict(VALID)
         del fields["touched"]
         self.put("a.md", thread_text(**fields))
-        core.regenerate(self.scope)
+        core.upkeep(self.scope)
         self.assertIn("No active threads.", self.index())
 
     def test_non_thread_entries_are_never_anomalies(self):
@@ -104,12 +104,12 @@ class Regenerate(unittest.TestCase):
         os.makedirs(os.path.join(self.root, ".threads", ".state", "notices"))
         self.put(os.path.join(".state", "notices", "a.md"), "x")
         os.mkdir(os.path.join(self.root, ".threads", "folder.md"))
-        self.assertEqual(core.regenerate(self.scope).anomalies, [])
+        self.assertEqual(core.upkeep(self.scope).anomalies, [])
         self.assertIn("No active threads.", self.index())
 
     def test_terminal_state_in_active_folder_is_an_anomaly(self):
         self.put("a.md", thread_text(**dict(VALID, status="resolved")))
-        result = core.regenerate(self.scope)
+        result = core.upkeep(self.scope)
         self.assertEqual([(a.rel, a.reason) for a in result.anomalies],
                          [(".threads/a.md", "status `resolved` does not belong in `.threads/`")])
         self.assertIn("No active threads.", self.index())
@@ -138,7 +138,7 @@ class Regenerate(unittest.TestCase):
         self.put("Bad.md", "junk")
         path = os.path.join(self.root, ".threads", "Bad.md")
         os.utime(path, (0, 0))
-        core.regenerate(self.scope)
+        core.upkeep(self.scope)
         self.assertEqual(os.stat(path).st_mtime, 0)
         with open(path, encoding="utf-8") as f:
             self.assertEqual(f.read(), "junk")
@@ -146,23 +146,23 @@ class Regenerate(unittest.TestCase):
                       self.index())
 
     def test_archive_indexes_only_where_folders_exist(self):
-        core.regenerate(self.scope)
+        core.upkeep(self.scope)
         self.assertEqual(os.listdir(os.path.join(self.root, ".threads")), [])
         os.mkdir(os.path.join(self.root, ".threads", "history"))
-        core.regenerate(self.scope)
+        core.upkeep(self.scope)
         self.assertEqual(os.listdir(os.path.join(self.root, ".threads", "history")), ["INDEX.md"])
 
     def test_unchanged_index_not_rewritten(self):
         self.put("a.md", thread_text(**VALID))
-        core.regenerate(self.scope)
+        core.upkeep(self.scope)
         os.utime(self.scope.index_path, (0, 0))
-        core.regenerate(self.scope)
+        core.upkeep(self.scope)
         self.assertEqual(os.stat(self.scope.index_path).st_mtime, 0)
         self.assertEqual(sorted(os.listdir(self.root)), [".threads", "THREADS.md"])
 
     def test_lf_and_utf8(self):
         self.put("a.md", thread_text(**dict(VALID, question="Perché?")))
-        core.regenerate(self.scope)
+        core.upkeep(self.scope)
         with open(self.scope.index_path, "rb") as f:
             data = f.read()
         self.assertNotIn(b"\r", data)
@@ -280,6 +280,106 @@ class CreateScope(unittest.TestCase):
         _, user = core.run_init(work, user=True, env=self.env)
         self.assertNotIn("approval", project)
         self.assertEqual(user.count("approval"), 1)
+
+
+class Retirement(unittest.TestCase):
+    """Edges the conformance cases leave out; the TTL rule itself is covered there."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        os.makedirs(os.path.join(self.root, ".threads", "history", "expired"))
+        self.scope = core.resolve_scope(self.root, {"HOME": os.path.join(self.root, "no-home")})
+        os.environ["THREADS_TODAY"] = "2026-03-10"
+        self.addCleanup(os.environ.pop, "THREADS_TODAY", None)
+
+    def path(self, *parts):
+        return os.path.join(self.root, ".threads", *parts)
+
+    def put(self, rel, data):
+        with open(self.path(*rel.split("/")), "wb") as f:
+            f.write(data if isinstance(data, bytes) else data.encode("utf-8"))
+
+    def read(self, rel):
+        with open(self.path(*rel.split("/")), "rb") as f:
+            return f.read()
+
+    def stale(self, **extra):
+        fields = dict(VALID, id="p", status="proposed", opened="2026-03-01")
+        fields.update(extra)
+        return thread_text(**fields)
+
+    def test_moved_back_reads_as_a_normal_thread(self):
+        self.put("p.md", self.stale())
+        core.upkeep(self.scope)
+        self.assertEqual([t.id for t in core.scan(self.scope).expired], ["p"])
+        os.rename(self.path("history", "expired", "p.md"), self.path("p.md"))
+        result = core.scan(self.scope)
+        self.assertEqual(([t.id for t in result.active], result.expired, result.anomalies),
+                         (["p"], [], []))
+
+    def test_vanished_source_is_done(self):
+        self.put("p.md", self.stale())
+        stale_scan = core.scan(self.scope)
+        os.remove(self.path("p.md"))
+        self.assertEqual(core.retire_expired(self.scope, stale_scan), [])
+        self.assertEqual(core.pending_notices(self.scope), [])
+        self.assertEqual(os.listdir(self.path("history", "expired")), [])
+
+    def test_repeated_upkeep_after_ack_queues_nothing(self):
+        self.put("p.md", self.stale())
+        core.upkeep(self.scope)
+        self.assertEqual(core.ack(self.scope, "p"), ["p"])
+        before = self.read("history/expired/p.md")
+        core.upkeep(self.scope)
+        self.assertEqual(core.pending_notices(self.scope), [])
+        self.assertEqual(self.read("history/expired/p.md"), before)
+        self.assertEqual(core.ack(self.scope, "p"), [])
+
+    def test_destination_not_a_thread_file_blocks_retirement(self):
+        self.put("p.md", self.stale())
+        os.mkdir(self.path("history", "expired", "p.md"))
+        result = core.upkeep(self.scope)
+        self.assertEqual([(a.rel, a.reason) for a in result.anomalies], [
+            (".threads/p.md", "cannot be retired: `.threads/history/expired/p.md` already exists")])
+        self.assertEqual(self.read("p.md"), self.stale().encode("utf-8"))
+        self.assertEqual(core.pending_notices(self.scope), [])
+
+    def test_bytes_kept_except_the_additions(self):
+        original = ("\ufeff---\nid: p\nstatus: proposed\nexpired: 2025-01-01\nopened: 2026-03-01\n"
+                    "touched: 2026-03-01\nquestion: Q?\nz_mine: 'kept'\n---\n\n## 2026-03-01\n\nNote.")
+        self.put("p.md", original)
+        core.upkeep(self.scope)
+        expected = original.replace("expired: 2025-01-01", "expired: 2026-03-10") + (
+            "\n\n## 2026-03-10\n\n" + core.RETIREMENT_NOTE)
+        self.assertEqual(self.read("history/expired/p.md"), expected.encode("utf-8"))
+        self.assertFalse(os.path.exists(self.path("p.md")))
+
+    def test_crlf_kept_and_added_lines_lf(self):
+        self.put("p.md", self.stale().replace("\n", "\r\n"))
+        core.upkeep(self.scope)
+        self.assertEqual(self.read("history/expired/p.md"), (
+            self.stale().replace("\n", "\r\n")
+            .replace("\r\n---\r\n", "\r\nexpired: 2026-03-10\n---\r\n")
+            + "\n## 2026-03-10\n\n" + core.RETIREMENT_NOTE).encode("utf-8"))
+
+    def test_creates_missing_folders(self):
+        os.rmdir(self.path("history", "expired"))
+        os.rmdir(self.path("history"))
+        self.put("p.md", self.stale())
+        core.upkeep(self.scope)
+        self.assertTrue(os.path.isfile(self.path("history", "expired", "p.md")))
+        self.assertEqual(core.pending_notices(self.scope), ["p"])
+
+    def test_future_opened_stays(self):
+        self.put("p.md", self.stale(opened="2026-04-01"))
+        core.upkeep(self.scope)
+        self.assertTrue(os.path.isfile(self.path("p.md")))
+
+    def test_ack_rejects_a_non_id(self):
+        with self.assertRaises(ValueError):
+            core.ack(self.scope, "../p")
 
 
 class Today(unittest.TestCase):

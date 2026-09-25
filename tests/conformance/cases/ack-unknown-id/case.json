@@ -1,0 +1,9 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "ack",
+    "never-queued"
+  ],
+  "stdout": "No retirement notice is queued for never-queued\n",
+  "refusal": null
+}

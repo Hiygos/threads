@@ -1,0 +1,9 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "ack",
+    "all"
+  ],
+  "stdout": "Acknowledged the retirement notice of first-one\nAcknowledged the retirement notice of second-one\n",
+  "refusal": null
+}
