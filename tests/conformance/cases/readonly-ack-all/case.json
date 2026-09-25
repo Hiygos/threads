@@ -1,0 +1,9 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "ack",
+    "all"
+  ],
+  "stdout": "Not acknowledged: this scope uses contract 2; update threads. Until then it is read-only: change no file in it.\n",
+  "refusal": "Not acknowledged: this scope uses contract 2"
+}

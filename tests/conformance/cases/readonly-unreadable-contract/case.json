@@ -1,0 +1,8 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "start"
+  ],
+  "stdout": "This scope's contract version in `.threads/.contract` cannot be read; fix it or update threads. Until then it is read-only: change no file in it.\n\n# Active threads\n\nProject scope at {sandbox}; paths are relative to it.\n\n## Open\n\n- **[cache-policy](.threads/cache-policy.md)** — Which cache eviction policy fits best?\n  - leaning: LRU, until measurements say otherwise\n\n## Proposed (awaiting confirmation)\n\n- **[old-proposal](.threads/old-proposal.md)** — Should the parser accept tabs?\n",
+  "refusal": null
+}

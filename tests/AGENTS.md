@@ -10,7 +10,9 @@ runs every case against every implementation.
 - `test_core.py` — core unit tests, through the core's public interface.
 - `test_packaging.py` — packaged core copies identical to the source.
 - `test_plugin.py` — the plugin's `sh` guard (fake interpreters on `PATH`) and
-  hook I/O, including the briefing's order and the context cap.
+  hook I/O, including the briefing's order, the context cap, and a
+  read-only scope left untouched down to `.state/plugin/` and mtimes
+  (which conformance does not compare).
 - `conformance/` — the harness (`harness.py`) and one folder per case under
   `conformance/cases/` (`before/`, `after/`, `case.json`; format in the
   harness docstring, with how each operation maps to a plugin entry point:

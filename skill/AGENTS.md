@@ -20,6 +20,9 @@ own, with nothing from the rest of the repo.
 - Subcommands so far: `init [user]` (exits 1 on a refusal), `start`,
   `regen`, `ack <id>|all` (exits 2 on a target that is neither). Each one
   except `init` runs the core's upkeep first (`CONTRACT.md` § Operations).
+- In a read-only scope (`CONTRACT.md` § Contract version) nothing is
+  written: `regen` prints the contract-version warning and exits 0, `ack`
+  refuses and exits 1.
 - `start` prints the briefing's data sections only; the always-on rules are
   not printed, they belong in `SKILL.md`. Its ack command lines are
   `cd <scope root> && python3 <absolute path of this script> ack <id>`.

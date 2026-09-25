@@ -6,7 +6,8 @@ creates a scope; every other subcommand works on the scope resolved from the
 current directory, runs the core's upkeep first, and is silent when no scope
 exists. `start` prints the briefing (its data sections: the rules are in
 SKILL.md). `ack <id>|all` acknowledges retirement notices, after the agent
-has told the user about them.
+has told the user about them. In a scope with a newer or unreadable
+contract nothing is written: `regen` prints the warning and `ack` refuses.
 """
 import os
 import shlex
@@ -47,6 +48,8 @@ def cmd_start(scope, args):
 
 def cmd_regen(scope, args):
     threads_core.upkeep(scope)
+    # A read-only scope was not regenerated: say why.
+    sys.stdout.write(threads_core.contract_warning(scope))
     return 0
 
 
@@ -54,7 +57,11 @@ def cmd_ack(scope, args):
     if len(args) != 1 or not (args[0] == "all" or threads_core.valid_id(args[0])):
         sys.stderr.write(USAGE)
         return 2
-    done = threads_core.ack(scope, args[0])
+    try:
+        done = threads_core.ack(scope, args[0])
+    except threads_core.ReadOnlyScope as refused:
+        sys.stdout.write(str(refused))
+        return 1
     sys.stdout.write(threads_core.ack_text(done, args[0]))
     return 0
 

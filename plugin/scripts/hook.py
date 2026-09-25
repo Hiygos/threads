@@ -9,7 +9,8 @@ prints plain text for the model to report, always exiting 0 (a non-zero exit
 would make Claude Code fail the skill instead of showing the outcome).
 `hook.py ack <id>|all` is the command line SessionStart gives the agent for
 each retirement notice; it acknowledges notices in the scope resolved from
-the current directory. No state under the plugin root.
+the current directory. No state under the plugin root, and nothing written
+in a read-only scope (newer or unreadable contract): `ack` refuses there.
 """
 import json
 import os
@@ -115,7 +116,11 @@ def ack(args):
     scope = threads_core.resolve_scope(os.getcwd())
     if scope is None:
         return 0
-    done = threads_core.ack(scope, args[0])
+    try:
+        done = threads_core.ack(scope, args[0])
+    except threads_core.ReadOnlyScope as refused:
+        sys.stdout.write(str(refused))
+        return 1
     sys.stdout.write(threads_core.ack_text(done, args[0]))
     return 0
 

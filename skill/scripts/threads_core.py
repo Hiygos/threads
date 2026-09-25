@@ -123,6 +123,17 @@ BRIEFING_STALE_HEADER = (
     "\n"
 )
 
+# The contract-version warning (normative): the one urgent section of a
+# read-only scope, a single line.
+CONTRACT_NEWER_WARNING = (
+    "This scope uses contract %d; update threads. Until then it is read-only:"
+    " change no file in it.\n"
+)
+CONTRACT_UNKNOWN_WARNING = (
+    "This scope's contract version in `.threads/.contract` cannot be read; fix it"
+    " or update threads. Until then it is read-only: change no file in it.\n"
+)
+
 BRIEFING_LISTING_HEADER = (
     "# Active threads\n"
     "\n"
@@ -175,6 +186,13 @@ class ScopeExists(Exception):
     def __init__(self, scope):
         Exception.__init__(self, scope.root)
         self.scope = scope
+
+
+class ReadOnlyScope(Exception):
+    """A write refused: the scope's contract is newer than this core, or unreadable.
+
+    `str()` is the text an adapter prints.
+    """
 
 
 class Thread:
@@ -567,6 +585,43 @@ def render_contract():
     return "%d\n" % CONTRACT_VERSION
 
 
+def contract_version(scope):
+    """The scope's contract version: 1 when `.threads/.contract` is absent.
+
+    None when it exists but cannot be read as a version: a leading BOM and
+    surrounding whitespace are tolerated, the rest must be `[1-9][0-9]*`.
+    """
+    try:
+        with open(scope.contract_path, "rb") as f:
+            data = f.read()
+    except FileNotFoundError:
+        return 1
+    except OSError:
+        return None
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    text = text.lstrip("\ufeff").strip()
+    if not re.fullmatch(r"[1-9][0-9]*", text):
+        return None
+    return int(text)
+
+
+def contract_warning(scope):
+    """The contract-version warning of a read-only scope; empty when writable.
+
+    A scope is read-only when its contract version is higher than
+    CONTRACT_VERSION or cannot be read: nothing in it is written.
+    """
+    version = contract_version(scope)
+    if version is None:
+        return CONTRACT_UNKNOWN_WARNING
+    if version > CONTRACT_VERSION:
+        return CONTRACT_NEWER_WARNING % version
+    return ""
+
+
 def render_history_index(scan=None):
     """The normative text of `.threads/history/INDEX.md`."""
     threads = scan.closed if scan is not None else []
@@ -761,8 +816,11 @@ def upkeep(scope):
     """The idempotent upkeep every operation runs first; return the final scan.
 
     Retires expired proposals (queueing their notices), then rebuilds the
-    generated files from the folders.
+    generated files from the folders. In a read-only scope (contract_warning)
+    it only scans, writing nothing.
     """
+    if contract_warning(scope):
+        return scan(scope)
     retire_expired(scope)
     result = scan(scope)
     _write_generated(scope, result)
@@ -773,10 +831,14 @@ def ack(scope, target):
     """Acknowledge retirement notices after upkeep: `target` is an id or "all".
 
     Returns the ids whose notice this call deleted (empty when none was
-    queued). Raises ValueError for a target that is neither.
+    queued). Raises ValueError for a target that is neither, and
+    ReadOnlyScope, deleting nothing, in a read-only scope.
     """
     if target != "all" and not valid_id(target):
         raise ValueError(target)
+    warning = contract_warning(scope)
+    if warning:
+        raise ReadOnlyScope("Not acknowledged: " + warning[0].lower() + warning[1:])
     upkeep(scope)
     done = []
     for thread_id in pending_notices(scope) if target == "all" else [target]:
@@ -812,17 +874,13 @@ def is_stale(thread, now=None):
     return ((now or today()) - touched).days > limit
 
 
-def _contract_warning(scope):
-    """The contract-version warning section: its slot in the briefing, empty for now."""
-    return ""
-
-
 class Briefing:
     """The briefing's data sections for one scope, as adapters compose them.
 
     `urgent` is the list of urgent sections, in order (retirements,
-    anomalies, contract-version warning, merge review, stale threads), each
-    present only when it has something to say; `listing` is the active
+    anomalies, merge review, stale threads), each present only when it has
+    something to say, or the contract-version warning alone in a read-only
+    scope; `listing` is the active
     threads. Each section is text ending in LF; sections are joined by one
     blank line. Adapters insert their own text (the rules) between the
     urgent sections and the listing, and may truncate the listing only.
@@ -859,14 +917,20 @@ def briefing(scope, result, ack_command, leaning_max=None):
 
     `ack_command(target)` is the adapter's exact command line that
     acknowledges `target` (an id or "all"); `leaning_max` is the adapter's
-    own `leaning` truncation for the listing (None: none).
+    own `leaning` truncation for the listing (None: none). A read-only
+    scope's only urgent section is the contract-version warning: the others
+    ask for writes, under rules its newer contract may have changed.
     """
+    listing = (BRIEFING_LISTING_HEADER % (scope.kind.capitalize(), scope.root)
+               + _active_groups(result.active, leaning_max))
+    warning = contract_warning(scope)
+    if warning:
+        return Briefing([warning], listing)
     now = today()
     urgent = [_retirements(scope, result, ack_command)]
     if result.anomalies:
         urgent.append(BRIEFING_ANOMALIES_HEADER + "".join(
             "- `%s` — %s\n" % (a.rel, a.reason) for a in result.anomalies))
-    urgent.append(_contract_warning(scope))
     if len(result.active) > MERGE_REVIEW_OVER:
         urgent.append(BRIEFING_MERGE_REVIEW % len(result.active))
     stale = [t for t in result.active if is_stale(t, now)]
@@ -874,6 +938,4 @@ def briefing(scope, result, ack_command, leaning_max=None):
         urgent.append(BRIEFING_STALE_HEADER + "".join(
             "- `%s` (%s, touched %s) — %s\n" % (t.id, t.status, t.fields["touched"], t.question)
             for t in stale))
-    listing = (BRIEFING_LISTING_HEADER % (scope.kind.capitalize(), scope.root)
-               + _active_groups(result.active, leaning_max))
     return Briefing([u for u in urgent if u], listing)

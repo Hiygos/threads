@@ -249,6 +249,29 @@ class PluginHooks(unittest.TestCase):
         self.hook()
         self.assertEqual(self.tree(self.plugin), before)
 
+    def test_newer_contract_writes_nothing_private_state_included(self):
+        # Conformance ignores `.state/plugin/`; here the whole scope, mtimes too.
+        self.real("python3")
+        self.add_scope()
+        self.write(".contract", "%d\n" % (core.CONTRACT_VERSION + 1))
+        self.write("old-idea.md", "---\nid: old-idea\nstatus: proposed\nopened: 2025-12-01\n"
+                   "touched: 2025-12-01\nquestion: Which log level?\n---\n")
+
+        def state():
+            return sorted((os.path.relpath(os.path.join(d, n), self.work),
+                           os.lstat(os.path.join(d, n)).st_mtime_ns)
+                          for d, dirs, files in os.walk(self.work) for n in dirs + files)
+
+        before = state()
+        context = self.context(self.hook())
+        self.assertIn("uses contract %d; update threads" % (core.CONTRACT_VERSION + 1), context)
+        env = dict(os.environ, PATH=self.bin, HOME=os.path.join(self.tmp.name, "home"))
+        env.pop("THREADS_USER_ROOT", None)
+        proc = subprocess.run(["/bin/sh", os.path.join(self.plugin, "scripts", "guard.sh"),
+                               "ack", "all"], cwd=self.work, env=env, capture_output=True)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(state(), before)
+
     def test_init_creates_and_refuses_with_exit_0(self):
         self.real("python3")
         before = self.tree(self.plugin)

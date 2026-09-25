@@ -43,6 +43,9 @@ here), so it must work on its own, with nothing from the rest of the repo.
   acknowledge it: `cd <scope root> && sh <absolute path of guard.sh> ack <id>`
   (paths shell-quoted), built from the installed plugin's own location,
   since `${CLAUDE_PLUGIN_ROOT}` is not in the agent's shell.
+- In a read-only scope (`CONTRACT.md` § Contract version) nothing is
+  written, `.state/plugin/` included: SessionStart only injects the
+  briefing, and `ack` refuses and exits 1.
 - `/threads:init` resolves from the session's current directory and always
   exits 0, a refusal included: a non-zero exit in `!` injection makes Claude
   Code fail the skill instead of passing the outcome to the model.

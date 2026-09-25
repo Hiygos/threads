@@ -24,10 +24,31 @@ below is created on demand.
   with its generated index `.threads/history/expired/INDEX.md`.
 - `.threads/.contract` holds the scope's contract version: the version as a
   decimal integer followed by one LF, so `1⏎` (the two bytes `31 0A`) for
-  contract 1.
+  contract 1. How it is read, and what a newer version means: § Contract
+  version.
 - `.threads/.state/notices/` is the retirement-notice queue (§ Retirement
   notices). Everything else under `.threads/.state/` is implementation-private
   (`.state/plugin/`, `.state/skill/`) and not part of the contract.
+
+## Contract version
+
+A scope's contract version is read from `.threads/.contract`:
+
+- Absent: the scope uses contract 1 (a scope made with `mkdir .threads`).
+- Its content, after dropping a leading byte order mark and surrounding
+  whitespace (spaces, tabs, CR, LF), must be a decimal integer without
+  leading zeros (`[1-9][0-9]*`); that integer is the version.
+- Anything else — not UTF-8, empty, `0`, not a number, more than one
+  number, or an entry that cannot be read as a file — is an **unknown**
+  version.
+
+A scope is **read-only** for an implementation when its version is higher
+than the version the implementation implements, or unknown. In a read-only
+scope an implementation writes nothing anywhere in the scope, whatever the
+operation: no retirement, no notice queued or deleted, no generated file,
+and no implementation-private state under `.threads/.state/` either. It
+still reads the scope with its own rules, to show the briefing
+(§ Briefing, section 3). Operations behave as § Operations says.
 
 ## Scope resolution
 
@@ -345,8 +366,23 @@ line (`⏎`). With `⏎` marking each line end:
    ```
 
    then one `` - `<path>` — <reason>⏎ `` per anomaly, as in `THREADS.md`.
-3. **Contract-version warning**: reserved for the read-only mode of a scope
-   with a newer contract; empty until that rule lands.
+3. **Contract-version warning**, in a read-only scope (§ Contract version)
+   only, where it is the *only* urgent section: sections 1, 2, 4 and 5 are
+   left out, since each asks for writes, under rules a newer contract may
+   have changed. It is one line, with `<N>` the scope's version:
+
+   ```
+   This scope uses contract <N>; update threads. Until then it is read-only: change no file in it.⏎
+   ```
+
+   or, for an unknown version,
+
+   ```
+   This scope's contract version in `.threads/.contract` cannot be read; fix it or update threads. Until then it is read-only: change no file in it.⏎
+   ```
+
+   The listing (section 6) is still present, computed in memory from the
+   folders as they are: no retirement is applied first.
 4. **Merge review**, when due, with `<n>` the active count:
 
    ```
@@ -395,7 +431,9 @@ sections.
 ## Operations
 
 Every operation on a scope (upkeep, briefing and acknowledge) runs the
-upkeep first. Every implementation must offer:
+upkeep first. In a read-only scope (§ Contract version) the upkeep writes
+nothing: it only reads the scope, and the operation that ran it goes on
+from there. Every implementation must offer:
 
 - **Upkeep**: retire every expired proposal (§ Retirement), then rebuild the
   generated files of the resolved scope. It writes nothing else: other
@@ -406,6 +444,10 @@ upkeep first. Every implementation must offer:
   that is not queued is not an error (it may have been acknowledged through
   the other implementation); a target that is neither `all` nor a valid id
   is refused. An id literally named `all` is acknowledged with `ack all`.
+  In a read-only scope it is refused, deleting nothing, with an output
+  line starting `Not acknowledged: ` followed by the contract-version
+  warning, its first letter lowercased; an implementation reports that
+  refusal the way it reports its other refusals.
 - **Create scope** (`init`), and **create the user scope** (`init user`),
   run on the user's explicit request only:
   - The project scope is created at the git root when the current directory

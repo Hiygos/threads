@@ -99,7 +99,7 @@ class Regenerate(unittest.TestCase):
 
     def test_non_thread_entries_are_never_anomalies(self):
         self.put("notes.txt", "x")
-        self.put(".contract", "not even a number")
+        self.put(".contract", "1\n")
         self.put(".hidden.md", "x")
         os.makedirs(os.path.join(self.root, ".threads", ".state", "notices"))
         self.put(os.path.join(".state", "notices", "a.md"), "x")
@@ -417,6 +417,48 @@ class Briefing(unittest.TestCase):
         brief = core.Briefing(["# A\n", "# B\n"], "# L\n")
         self.assertEqual(brief.text(), "# A\n\n# B\n\n# L\n")
         self.assertEqual(brief.text("# R\n", listing="# M\n"), "# A\n\n# B\n\n# R\n\n# M\n")
+
+
+class ContractVersion(unittest.TestCase):
+    """How `.threads/.contract` is read; read-only behaviour is covered by conformance."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        os.mkdir(os.path.join(tmp.name, ".threads"))
+        self.scope = core.resolve_scope(tmp.name, {"HOME": os.path.join(tmp.name, "no-home")})
+
+    def put(self, data):
+        with open(self.scope.contract_path, "wb") as f:
+            f.write(data)
+
+    def test_absent_is_contract_1(self):
+        self.assertEqual(core.contract_version(self.scope), 1)
+        self.assertEqual(core.contract_warning(self.scope), "")
+
+    def test_tolerant_reader(self):
+        for data, version in ((b"1\n", 1), (b"1", 1), (b"\xef\xbb\xbf1\r\n", 1), (b" 12 \n", 12)):
+            with self.subTest(data=data):
+                self.put(data)
+                self.assertEqual(core.contract_version(self.scope), version)
+
+    def test_garbled_is_unknown_and_read_only(self):
+        for data in (b"", b"0\n", b"01\n", b"two\n", b"1\n2\n", b"-1\n", b"\xff\n"):
+            with self.subTest(data=data):
+                self.put(data)
+                self.assertIsNone(core.contract_version(self.scope))
+                self.assertNotEqual(core.contract_warning(self.scope), "")
+
+    def test_unreadable_is_unknown(self):
+        os.mkdir(self.scope.contract_path)
+        self.assertIsNone(core.contract_version(self.scope))
+
+    def test_newer_is_read_only(self):
+        self.put(b"%d\n" % (core.CONTRACT_VERSION + 1))
+        self.assertIn("contract %d;" % (core.CONTRACT_VERSION + 1),
+                      core.contract_warning(self.scope))
+        with self.assertRaises(core.ReadOnlyScope):
+            core.ack(self.scope, "all")
 
 
 class Today(unittest.TestCase):
