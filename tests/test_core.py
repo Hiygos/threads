@@ -243,7 +243,7 @@ class CreateScope(unittest.TestCase):
         self.env = {"HOME": os.path.join(self.root, "home")}
 
     def tree(self, top):
-        return sorted(os.path.relpath(os.path.join(d, n), top)
+        return sorted(os.path.relpath(os.path.join(d, n), top).replace(os.sep, "/")
                       for d, dirs, files in os.walk(top) for n in dirs + files)
 
     def test_skeleton_only(self):

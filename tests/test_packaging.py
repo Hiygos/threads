@@ -39,7 +39,9 @@ release = load_release()
 def run_release(*args):
     proc = subprocess.run([sys.executable, "-B", RELEASE] + list(args), cwd=REPO,
                           capture_output=True)
-    return proc.returncode, proc.stdout.decode("utf-8"), proc.stderr.decode("utf-8")
+    # Maintainer tooling prints through the platform's text stdout: CRLF on Windows.
+    out, err = (b.decode("utf-8").replace("\r\n", "\n") for b in (proc.stdout, proc.stderr))
+    return proc.returncode, out, err
 
 
 class CoreCopies(unittest.TestCase):
