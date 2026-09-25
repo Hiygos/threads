@@ -10,6 +10,18 @@ A memory layer for open questions that an AI agent carries across sessions, ship
 An open question with a provisional position, kept across sessions until an outcome is declared.
 _Avoid_: issue, todo, note
 
+**Proposed thread**:
+A thread the agent opened on its own initiative and the user has not confirmed yet; unconfirmed, it is retired once its TTL passes.
+_Avoid_: draft, tentative thread
+
+**Retirement**:
+The automatic move of an expired proposed thread into the expired archive; unlike a closing, nobody decided it, so the user must be told.
+_Avoid_: deletion, expiry (for the move itself)
+
+**Anomaly**:
+A file in a threads folder that the contract cannot read, or whose state does not belong in that folder; reported, never fixed automatically.
+_Avoid_: corrupt thread, invalid thread
+
 **Task**:
 Work with no position to hold; not a thread.
 
