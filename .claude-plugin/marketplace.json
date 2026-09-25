@@ -4,7 +4,7 @@
   "plugins": [
     {
       "name": "threads",
-      "source": "./",
+      "source": "./plugin",
       "description": "A memory layer for open questions, kept honest across sessions by hooks."
     }
   ]

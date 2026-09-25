@@ -39,6 +39,7 @@ contract.
 
 - [`core/`](core/AGENTS.md) — the single source of the shared core; packaged copies are never edited.
 - [`docs/`](docs/AGENTS.md) — agent-facing config (`docs/agents/`) and ADRs (`docs/adr/`, created lazily).
+- [`plugin/`](plugin/AGENTS.md) — the Claude Code plugin, as installed (the marketplace entry points here); hooks run through an `sh` guard.
 - [`skill/`](skill/AGENTS.md) — the skill for any harness, as installed; so far the `threads` script.
 - [`tests/`](tests/AGENTS.md) — unit, packaging and conformance tests; goldens change only with `--update`.
 

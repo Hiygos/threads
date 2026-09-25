@@ -5,7 +5,10 @@ import unittest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE = os.path.join(REPO, "core", "threads_core.py")
 # Every place the core is packaged into; keep in sync with core/AGENTS.md.
-COPIES = [os.path.join(REPO, "skill", "scripts", "threads_core.py")]
+COPIES = [
+    os.path.join(REPO, "skill", "scripts", "threads_core.py"),
+    os.path.join(REPO, "plugin", "scripts", "threads_core.py"),
+]
 
 
 class CoreCopies(unittest.TestCase):

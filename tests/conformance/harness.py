@@ -9,6 +9,19 @@ A case is a folder under `cases/` holding `before/` (the scope as it starts),
 entry point. `refusal` is null when the operation must succeed, otherwise a
 string the refusal output must contain. Empty folders in fixtures carry a
 `.gitkeep`, ignored by the comparison. Goldens change only with `--update`.
+
+Adapters:
+
+- `skill` runs `skill/scripts/threads <operation>` in the scope folder; its
+  stdout is compared with `stdout`.
+- `plugin` runs the hook its operation maps to in `PLUGIN_HOOKS`, through the
+  real `sh` guard, with the hook input JSON on stdin (`cwd` = the scope
+  folder). Each entry is `(hook event, output field)`: the field of
+  `hookSpecificOutput` compared with `stdout`, or None when the hook's output
+  has no counterpart of the skill's stdout, in which case only the exit code
+  and the files on disk are compared. `regen` maps to SessionStart, which
+  regenerates the generated files before injecting the listing; the listing
+  itself is not the skill's `regen` output, so it is not compared here.
 """
 import json
 import os
@@ -20,6 +33,11 @@ import tempfile
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CASES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cases")
 SKILL_SCRIPT = os.path.join(REPO, "skill", "scripts", "threads")
+PLUGIN_GUARD = os.path.join(REPO, "plugin", "scripts", "guard.sh")
+
+# Skill operation -> (plugin hook event, hookSpecificOutput field compared
+# with the case's stdout, or None when not comparable).
+PLUGIN_HOOKS = {"regen": ("SessionStart", None)}
 
 KEEP = ".gitkeep"
 # Implementation-private state is not part of the contract.
@@ -29,6 +47,8 @@ UPDATE = False
 
 
 class Result:
+    """An adapter run; `stdout` is None when it has no counterpart to compare."""
+
     def __init__(self, code, stdout, stderr):
         self.code = code
         self.stdout = stdout
@@ -40,6 +60,8 @@ def base_env(case):
     env["TZ"] = "UTC"
     env["THREADS_TODAY"] = case["date"]
     env.pop("THREADS_USER_ROOT", None)
+    # The guard picks python3 from PATH: make it the interpreter running the tests.
+    env["PATH"] = os.path.dirname(sys.executable) + os.pathsep + env.get("PATH", "")
     return env
 
 
@@ -51,7 +73,23 @@ def run_skill(workdir, case):
     return Result(proc.returncode, proc.stdout.decode("utf-8"), proc.stderr.decode("utf-8"))
 
 
-ADAPTERS = {"skill": run_skill}
+def run_plugin(workdir, case):
+    event, field = PLUGIN_HOOKS[case["operation"][0]]
+    payload = {"session_id": "conformance", "hook_event_name": event, "cwd": workdir}
+    if event == "SessionStart":
+        payload["source"] = "startup"
+    proc = subprocess.run(
+        ["sh", PLUGIN_GUARD, event], input=json.dumps(payload).encode("utf-8"),
+        cwd=workdir, env=base_env(case), capture_output=True,
+    )
+    out = proc.stdout.decode("utf-8")
+    stdout = None
+    if field is not None:
+        stdout = json.loads(out)["hookSpecificOutput"].get(field, "") if out.strip() else ""
+    return Result(proc.returncode, stdout, proc.stderr.decode("utf-8"))
+
+
+ADAPTERS = {"skill": run_skill, "plugin": run_plugin}
 # With --update, the reference adapter writes the goldens; the others are
 # still compared against them, so a divergence cannot be baked in.
 REFERENCE = "skill"

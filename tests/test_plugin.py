@@ -1,0 +1,130 @@
+"""Plugin adapter tests: the `sh` guard and SessionStart, through hook I/O only."""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+from tests.core_import import threads_core as core
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PLUGIN = os.path.join(REPO, "plugin")
+INACTIVE = "threads is inactive: Python ≥3.9 not found"
+SOURCES = ("startup", "resume", "compact", "clear")
+THREAD = "---\nid: sample\nstatus: open\nopened: 2026-01-01\ntouched: 2026-01-02\nquestion: Which cache?\n---\n"
+
+
+class PluginHooks(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        # A private copy of the plugin, to check nothing is written under it.
+        self.plugin = os.path.join(self.tmp.name, "plugin")
+        shutil.copytree(PLUGIN, self.plugin, symlinks=True,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        self.work = os.path.join(self.tmp.name, "work")
+        os.mkdir(self.work)
+        self.bin = os.path.join(self.tmp.name, "bin")
+        os.mkdir(self.bin)
+
+    def fake(self, name, body):
+        path = os.path.join(self.bin, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\n" + body + "\n")
+        os.chmod(path, 0o755)
+
+    def real(self, name):
+        self.fake(name, 'exec "%s" "$@"' % sys.executable)
+
+    def too_old(self, name):
+        # Fails the version check like an interpreter older than 3.9 would.
+        self.fake(name, "exit 1")
+
+    def add_scope(self):
+        os.mkdir(os.path.join(self.work, ".threads"))
+        with open(os.path.join(self.work, ".threads", "sample.md"), "w", encoding="utf-8") as f:
+            f.write(THREAD)
+
+    def hook(self, event="SessionStart", source="startup"):
+        payload = {"session_id": "s1", "hook_event_name": event, "cwd": self.work}
+        if event == "SessionStart":
+            payload["source"] = source
+        env = dict(os.environ, PATH=self.bin, TZ="UTC", THREADS_TODAY="2026-01-03")
+        env.pop("THREADS_USER_ROOT", None)
+        proc = subprocess.run(
+            ["/bin/sh", os.path.join(self.plugin, "scripts", "guard.sh"), event],
+            input=json.dumps(payload).encode("utf-8"),
+            cwd=self.work, env=env, capture_output=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout.decode("utf-8")
+
+    def context(self, out):
+        output = json.loads(out)["hookSpecificOutput"]
+        self.assertEqual(output["hookEventName"], "SessionStart")
+        return output["additionalContext"]
+
+    def listing(self):
+        return core.render_index(core.scan_active(core.resolve_scope(self.work)))
+
+    def tree(self, root):
+        return sorted(os.path.relpath(os.path.join(d, n), root)
+                      for d, dirs, files in os.walk(root) for n in dirs + files)
+
+    def test_listing_injected_on_every_source(self):
+        self.real("python3")
+        self.add_scope()
+        for source in SOURCES:
+            with self.subTest(source=source):
+                context = self.context(self.hook(source=source))
+                self.assertIn(self.listing(), context)
+                self.assertIn("sample", context)
+
+    def test_session_start_regenerates_index(self):
+        self.real("python3")
+        self.add_scope()
+        self.hook()
+        with open(os.path.join(self.work, "THREADS.md"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), self.listing())
+
+    def test_no_scope_no_output(self):
+        self.real("python3")
+        self.assertEqual(self.hook(), "")
+        self.assertEqual(os.listdir(self.work), [])
+
+    def test_no_state_under_plugin_root(self):
+        self.real("python3")
+        self.add_scope()
+        before = self.tree(self.plugin)
+        self.hook()
+        self.assertEqual(self.tree(self.plugin), before)
+
+    def test_python_missing(self):
+        self.add_scope()
+        self.assertEqual(self.context(self.hook()), INACTIVE)
+        self.assertEqual(self.hook("Stop"), "")
+
+    def test_python_too_old(self):
+        self.too_old("python3")
+        self.too_old("python")
+        self.add_scope()
+        self.assertEqual(self.context(self.hook()), INACTIVE)
+        self.assertEqual(self.hook("Stop"), "")
+        self.assertFalse(os.path.exists(os.path.join(self.work, "THREADS.md")))
+
+    def test_only_python(self):
+        self.real("python")
+        self.add_scope()
+        self.assertIn(self.listing(), self.context(self.hook()))
+
+    def test_python3_too_old_falls_back_to_python(self):
+        self.too_old("python3")
+        self.real("python")
+        self.add_scope()
+        self.assertIn(self.listing(), self.context(self.hook()))
+
+
+if __name__ == "__main__":
+    unittest.main()

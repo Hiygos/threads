@@ -14,7 +14,8 @@ both implementations.
 
 - Python ≥3.9, standard library only.
 - **Packaged copies are never edited.** After changing `threads_core.py`, copy
-  it over each packaged location: `skill/scripts/threads_core.py`. A new
+  it over each packaged location: `skill/scripts/threads_core.py`,
+  `plugin/scripts/threads_core.py`. A new
   location is added here and to `COPIES` in `tests/test_packaging.py`.
 - A behaviour that is part of the contract changes with `CONTRACT.md` and its
   conformance cases in the same commit.

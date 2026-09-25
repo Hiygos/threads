@@ -18,8 +18,9 @@ class Conformance(unittest.TestCase):
                         self.assertEqual(result.code, 0, result.stderr)
                     else:
                         self.assertNotEqual(result.code, 0)
-                        self.assertIn(case["refusal"], result.stdout + result.stderr)
-                    self.assertEqual(result.stdout, case["stdout"])
+                        self.assertIn(case["refusal"], (result.stdout or "") + result.stderr)
+                    if result.stdout is not None:
+                        self.assertEqual(result.stdout, case["stdout"])
                     self.assertEqual(sorted(actual), sorted(expected), "paths differ")
                     for path in expected:
                         self.assertEqual(actual[path], expected[path], path)
