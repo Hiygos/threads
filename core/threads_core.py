@@ -22,6 +22,7 @@ USER_ROOT_ENV = "THREADS_USER_ROOT"
 DEFAULT_USER_ROOT = ".agents"  # relative to the home directory
 
 ACTIVE_STATES = ("proposed", "open", "deferred")
+TERMINAL_STATES = ("resolved", "abandoned", "merged")
 REQUIRED_FIELDS = ("id", "status", "opened", "touched", "question")
 
 INDEX_HEADER = (
@@ -57,7 +58,23 @@ INDEX_GROUPS = (
     ("proposed", "Proposed (awaiting confirmation)"),
 )
 
+# Group order and labels of `.threads/history/INDEX.md` are normative too.
+HISTORY_GROUPS = (
+    ("resolved", "Resolved"),
+    ("abandoned", "Abandoned"),
+    ("merged", "Merged"),
+)
+
+ANOMALIES_HEADER = (
+    "\n"
+    "## Anomalies\n"
+    "\n"
+    "> These files are not read as threads and are left untouched: fix them by hand.\n"
+    "\n"
+)
+
 _KEY_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+_ID_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 
 
 class Scope:
@@ -100,9 +117,12 @@ class ScopeExists(Exception):
 
 
 class Thread:
-    def __init__(self, path, fields):
+    """A thread file with no anomaly: its fields (unknown ones kept) and body."""
+
+    def __init__(self, path, fields, body=""):
         self.path = path
         self.fields = fields
+        self.body = body
 
     @property
     def id(self):
@@ -119,6 +139,29 @@ class Thread:
     @property
     def leaning(self):
         return self.fields.get("leaning", "")
+
+
+class Anomaly:
+    """A file in a threads folder the contract cannot read as a thread.
+
+    `rel` is its path relative to the scope root (`/` separated); `reason`
+    is the normative English text shown in THREADS.md.
+    """
+
+    def __init__(self, path, rel, reason):
+        self.path = path
+        self.rel = rel
+        self.reason = reason
+
+
+class ScopeScan:
+    """A scope read whole: threads per folder, sorted by id, and anomalies by path."""
+
+    def __init__(self, active, closed, expired, anomalies):
+        self.active = active
+        self.closed = closed
+        self.expired = expired
+        self.anomalies = anomalies
 
 
 def today():
@@ -277,21 +320,24 @@ def run_init(start, user=False, env=None):
     return True, text
 
 
-def parse_frontmatter(text):
-    """Parse the strict flat frontmatter subset; None when it is not one.
+def split_thread(text):
+    """Split a thread file's text into (fields, body); None when not the subset.
 
-    Not YAML: one `key: value` per line, paired quotes stripped, nothing else.
+    The strict flat frontmatter subset, not YAML: a leading BOM is dropped,
+    then a line `---`, one `key: value` per non-blank line (paired quotes
+    stripped, nothing else interpreted), and a closing `---`. The body is
+    everything after the closing line. Unknown fields are kept, in order.
     """
-    if text.startswith("﻿"):
+    if text.startswith("\ufeff"):
         text = text[1:]
     lines = text.split("\n")
-    if not lines or lines[0].rstrip("\r") != "---":
+    if lines[0].rstrip("\r") != "---":
         return None
     fields = {}
-    for raw in lines[1:]:
+    for n, raw in enumerate(lines[1:], 1):
         line = raw.rstrip("\r")
         if line == "---":
-            return fields
+            return fields, "\n".join(lines[n + 1:])
         if not line.strip():
             continue
         key, sep, value = line.partition(":")
@@ -305,43 +351,131 @@ def parse_frontmatter(text):
     return None
 
 
-def read_thread(path):
-    """A Thread for a well-formed file, or None."""
+def parse_frontmatter(text):
+    """The fields of the frontmatter subset (see split_thread), or None."""
+    parsed = split_thread(text)
+    return None if parsed is None else parsed[0]
+
+
+def valid_id(value):
+    """True when `value` is a kebab-case id: `[a-z0-9]+(-[a-z0-9]+)*`."""
+    return _ID_RE.fullmatch(value) is not None
+
+
+def _thread_files(folder, archive):
+    """The thread files of one folder: regular `*.md` files not starting with `.`.
+
+    An archive's own INDEX.md is excluded. Everything else (dot entries such
+    as `.contract` and `.state/`, other files, subfolders) is not a thread
+    file and never an anomaly.
+    """
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    return [n for n in sorted(names)
+            if n.endswith(".md") and not n.startswith(".")
+            and not (archive and n == ARCHIVE_INDEX_FILE)
+            and os.path.isfile(os.path.join(folder, n))]
+
+
+def _check(path, rel_folder, folder_states, expired_folder):
+    """(Thread, None) for a readable file, or (None, reason)."""
     try:
         with open(path, "rb") as f:
-            text = f.read().decode("utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-    fields = parse_frontmatter(text)
-    if fields is None or any(not fields.get(k) for k in REQUIRED_FIELDS):
-        return None
-    return Thread(path, fields)
+            data = f.read()
+    except OSError:
+        return None, "cannot be read"
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, "not UTF-8 text"
+    parsed = split_thread(text)
+    if parsed is None:
+        return None, "frontmatter missing or not the flat subset"
+    fields, body = parsed
+    missing = [k for k in REQUIRED_FIELDS if not fields.get(k)]
+    # Conditionally required: `merged_into` when merged, `expired` in the expired archive.
+    status = fields.get("status")
+    if status == "merged" and not fields.get("merged_into"):
+        missing.append("merged_into")
+    if expired_folder and status == "proposed" and not fields.get("expired"):
+        missing.append("expired")
+    if missing:
+        return None, "missing required field%s %s" % (
+            "s" if len(missing) > 1 else "", ", ".join("`%s`" % k for k in missing))
+    stem = os.path.basename(path)[:-len(".md")]
+    if not valid_id(fields["id"]):
+        return None, "invalid id `%s`" % fields["id"]
+    if fields["id"] != stem:
+        return None, "id `%s` does not match the file name" % fields["id"]
+    if fields["status"] not in folder_states:
+        return None, "status `%s` does not belong in `%s`" % (fields["status"], rel_folder)
+    return Thread(path, fields, body), None
 
 
-def scan_active(scope):
-    """Well-formed active threads in `.threads/`, sorted by id."""
-    threads = []
-    for name in sorted(os.listdir(scope.threads_dir)):
-        path = os.path.join(scope.threads_dir, name)
-        if not name.endswith(".md") or not os.path.isfile(path):
-            continue
-        thread = read_thread(path)
-        if thread and thread.status in ACTIVE_STATES:
-            threads.append(thread)
-    threads.sort(key=lambda t: t.id)
-    return threads
+def scan(scope):
+    """Read the three folders of `scope` into threads and anomalies.
+
+    `.threads/` holds the active states, `history/` the terminal ones and
+    `history/expired/` retired proposals (`proposed` with `expired`). A file
+    that breaks a rule is an anomaly: reported, never moved or rewritten.
+    """
+    folders = (
+        (scope.threads_dir, ACTIVE_STATES, False),
+        (scope.history_dir, TERMINAL_STATES, False),
+        (scope.expired_dir, ("proposed",), True),
+    )
+    found = []  # (folder index, path, rel, Thread or None, reason)
+    by_stem = {}
+    for index, (folder, states, expired_folder) in enumerate(folders):
+        rel_folder = os.path.relpath(folder, scope.root).replace(os.sep, "/") + "/"
+        for name in _thread_files(folder, archive=index > 0):
+            path = os.path.join(folder, name)
+            rel = rel_folder + name
+            thread, reason = _check(path, rel_folder, states, expired_folder)
+            found.append((index, path, rel, thread, reason))
+            by_stem.setdefault(name, []).append(rel)
+    groups = ([], [], [])
+    anomalies = []
+    for index, path, rel, thread, reason in found:
+        others = [r for r in by_stem[os.path.basename(path)] if r != rel]
+        if thread is not None and others:
+            thread, reason = None, "id `%s` also used by %s" % (
+                thread.id, ", ".join("`%s`" % r for r in others))
+        if thread is None:
+            anomalies.append(Anomaly(path, rel, reason))
+        else:
+            groups[index].append(thread)
+    for threads in groups:
+        threads.sort(key=lambda t: t.id)
+    anomalies.sort(key=lambda a: a.rel)
+    return ScopeScan(groups[0], groups[1], groups[2], anomalies)
 
 
-def render_index(threads):
-    """The normative text of THREADS.md for `threads`."""
-    out = [INDEX_HEADER]
+def _entry(thread, link):
+    return "- **[%s](%s)** — %s\n" % (thread.id, link, thread.question)
+
+
+def render_anomalies(anomalies):
+    """The normative anomalies section of THREADS.md; empty with no anomaly."""
+    if not anomalies:
+        return ""
+    return ANOMALIES_HEADER + "".join(
+        "- `%s` — %s\n" % (a.rel, a.reason) for a in anomalies)
+
+
+def render_index(scan):
+    """The normative text of THREADS.md for a ScopeScan: anomalies, then active threads."""
+    threads = scan.active
+    out = [INDEX_HEADER, render_anomalies(scan.anomalies)]
     for state, label in INDEX_GROUPS:
         rows = [t for t in threads if t.status == state]
         if not rows:
             continue
         out.append("\n## %s\n\n" % label)
         for t in rows:
-            out.append("- **[%s](%s/%s.md)** — %s\n" % (t.id, THREADS_DIR, t.id, t.question))
+            out.append(_entry(t, "%s/%s.md" % (THREADS_DIR, t.id)))
             if t.leaning:
                 out.append("  - leaning: %s\n" % t.leaning)
     if not threads:
@@ -354,14 +488,40 @@ def render_contract():
     return "%d\n" % CONTRACT_VERSION
 
 
-def render_history_index():
-    """The normative text of `.threads/history/INDEX.md` with no closed thread."""
-    return HISTORY_INDEX_HEADER + "\nNo closed threads.\n"
+def render_history_index(scan=None):
+    """The normative text of `.threads/history/INDEX.md`."""
+    threads = scan.closed if scan is not None else []
+    out = [HISTORY_INDEX_HEADER]
+    for state, label in HISTORY_GROUPS:
+        rows = [t for t in threads if t.status == state]
+        if not rows:
+            continue
+        out.append("\n## %s\n\n" % label)
+        for t in rows:
+            out.append(_entry(t, "%s.md" % t.id))
+            if t.leaning:
+                out.append("  - leaning: %s\n" % t.leaning)
+            if state == "merged":
+                out.append("  - merged into: %s\n" % t.fields["merged_into"])
+    if not threads:
+        out.append("\nNo closed threads.\n")
+    return "".join(out)
 
 
-def render_expired_index():
-    """The normative text of `.threads/history/expired/INDEX.md` with no retired thread."""
-    return EXPIRED_INDEX_HEADER + "\nNo expired threads.\n"
+def render_expired_index(scan=None):
+    """The normative text of `.threads/history/expired/INDEX.md`."""
+    threads = scan.expired if scan is not None else []
+    out = [EXPIRED_INDEX_HEADER]
+    if threads:
+        out.append("\n")
+    for t in threads:
+        out.append(_entry(t, "%s.md" % t.id))
+        if t.leaning:
+            out.append("  - leaning: %s\n" % t.leaning)
+        out.append("  - expired: %s\n" % t.fields["expired"])
+    if not threads:
+        out.append("\nNo expired threads.\n")
+    return "".join(out)
 
 
 def write_atomic(path, text):
@@ -385,5 +545,17 @@ def write_atomic(path, text):
 
 
 def regenerate(scope):
-    """Rebuild the generated files of `scope` from its folders."""
-    write_atomic(scope.index_path, render_index(scan_active(scope)))
+    """Rebuild the generated files of `scope` from its folders; return the scan.
+
+    An archive's INDEX.md is written only when its folder exists: upkeep
+    never creates folders.
+    """
+    result = scan(scope)
+    write_atomic(scope.index_path, render_index(result))
+    if os.path.isdir(scope.history_dir):
+        write_atomic(os.path.join(scope.history_dir, ARCHIVE_INDEX_FILE),
+                     render_history_index(result))
+    if os.path.isdir(scope.expired_dir):
+        write_atomic(os.path.join(scope.expired_dir, ARCHIVE_INDEX_FILE),
+                     render_expired_index(result))
+    return result

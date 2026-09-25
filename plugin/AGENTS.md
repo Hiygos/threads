@@ -30,7 +30,8 @@ here), so it must work on its own, with nothing from the rest of the repo.
   (`CONTRACT.md` § Scope resolution); every hook is silent when none exists.
 - `guard.sh` uses shell builtins only (it must run with a bare `PATH`).
 - Hooks so far: SessionStart (every source) regenerates the generated files
-  and injects the thread listing as `additionalContext`.
+  and injects `THREADS.md`'s text (anomalies, then the listing) as
+  `additionalContext`.
 - `/threads:init` resolves from the session's current directory and always
   exits 0, a refusal included: a non-zero exit in `!` injection makes Claude
   Code fail the skill instead of passing the outcome to the model.

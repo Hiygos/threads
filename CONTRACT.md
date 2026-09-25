@@ -54,16 +54,64 @@ read at all.
 - A thread file is UTF-8 text. A leading byte order mark is tolerated on read;
   implementations write LF line endings.
 - It starts with a frontmatter block: a line `---`, then field lines, then a
-  line `---`. The body after it holds dated notes.
+  line `---`. The body after it holds dated notes (`## YYYY-MM-DD`),
+  chronological and append-only.
 - The frontmatter is a strict flat subset, **not YAML**: each non-blank line is
   `key: value`, with `key` matching `[a-z_][a-z0-9_]*`; the value is the rest
   of the line, trimmed. If the value both starts and ends with the same quote
   character (`"` or `'`), those two quotes are removed. Nothing else is
   interpreted: no block scalars, no lists, no comments, no duplicate keys.
+  A CR before a line's LF is ignored on read.
 - Required fields: `id`, `status`, `opened`, `touched`, `question`, each
-  non-empty. Optional: `leaning`.
-- Unknown fields are preserved and ignored.
-- Active states: `proposed`, `open`, `deferred`.
+  non-empty. Optional: `leaning`. Conditionally required, non-empty:
+  `merged_into` when `status` is `merged`, and `expired` in
+  `.threads/history/expired/`. A conditional field elsewhere is ignored,
+  not an anomaly (a reopened retired proposal keeps its `expired`). There
+  are no silent defaults.
+- Dates (`opened`, `touched`, `expired`) are local `YYYY-MM-DD`; a malformed
+  date is not an anomaly.
+- Unknown fields are preserved and ignored; implementations never add fields.
+- The **id** is kebab-case, matching `[a-z0-9]+(-[a-z0-9]+)*` in full, equal to
+  the file name without `.md`, and unique across the three folders.
+
+### Folders and states
+
+| Folder                      | States it holds                                  |
+| --------------------------- | ------------------------------------------------ |
+| `.threads/`                 | `proposed`, `open`, `deferred` (active states)   |
+| `.threads/history/`         | `resolved`, `abandoned`, `merged` (terminal)     |
+| `.threads/history/expired/` | `proposed`, with `expired` (retired proposals)   |
+
+The **thread files** of a folder are its regular files whose name ends in
+`.md` and does not start with `.`, except each archive's own `INDEX.md`.
+Nothing else is a thread file or an anomaly: dot entries (`.threads/.contract`,
+`.threads/.state/`, …), other files and subfolders are not read as threads.
+
+### Anomalies
+
+A thread file breaking a rule above is an **anomaly**. Anomalies are listed in
+`THREADS.md` (§ Generated files), never listed as threads, and never moved,
+deleted or rewritten. Each anomaly has one reason: the first that
+applies, in this order, with this exact text (`<…>` filled in, backticks
+literal):
+
+| Rule broken                                    | Reason                                              |
+| ---------------------------------------------- | --------------------------------------------------- |
+| The file cannot be opened or read              | `cannot be read`                                    |
+| The bytes are not UTF-8                        | `not UTF-8 text`                                    |
+| No frontmatter block, or not the flat subset   | `frontmatter missing or not the flat subset`        |
+| Required fields missing or empty               | `` missing required field `<f>` `` or `` missing required fields `<f>`, `<g>` `` |
+| The id is not kebab-case                       | `` invalid id `<id>` ``                             |
+| The id differs from the file name              | `` id `<id>` does not match the file name ``       |
+| The status does not belong in the folder       | `` status `<status>` does not belong in `<folder>` `` |
+| Another folder holds a file with the same name | `` id `<id>` also used by `<path>`, `<path>` ``     |
+
+Missing fields are named in the order `id`, `status`, `opened`, `touched`,
+`question`, `merged_into`, `expired`. `<folder>` and `<path>` are relative to
+the scope root and `/`-separated, a folder ending in `/`
+(`.threads/history/`); the other paths are
+sorted in Unicode code point order. Every file sharing a name across folders
+is an anomaly; each reports its own earlier reason if it has one.
 
 ## Generated files
 
@@ -71,10 +119,15 @@ Generated files are always recomputed from the folders, never edited by hand,
 and must be byte-identical whichever implementation wrote them. They are
 written through a temp file in the same folder, then renamed.
 
+Regeneration writes `THREADS.md` and the `INDEX.md` of each archive folder
+that exists; it never creates a folder. Threads are sorted by `id`, and
+anomalies by path, in Unicode code point order.
+
 ### `THREADS.md`
 
-Lists the well-formed threads in `.threads/` whose `status` is an active state.
-Its exact text is, with `⏎` marking each line end (LF):
+Lists the anomalies of the whole scope, then the threads of `.threads/`
+that are not anomalies. Its exact text is, with `⏎` marking each line end
+(LF):
 
 ```
 # THREADS⏎
@@ -83,8 +136,20 @@ Its exact text is, with `⏎` marking each line end (LF):
 > and this index is rebuilt on the next upkeep.⏎
 ```
 
-followed by one group per state that has at least one thread, in this order
-and with these labels:
+followed, when the scope has at least one anomaly, by
+
+```
+⏎
+## Anomalies⏎
+⏎
+> These files are not read as threads and are left untouched: fix them by hand.⏎
+⏎
+<one line per anomaly>
+```
+
+each line being `` - `<path>` — <reason>⏎ `` (path relative to the scope
+root, reason from § Anomalies), then by one group per state that has at
+least one thread, in this order and with these labels:
 
 | State      | Label                              |
 | ---------- | ---------------------------------- |
@@ -101,7 +166,7 @@ Each group is:
 <one entry per thread>
 ```
 
-with threads sorted by `id` in Unicode code point order, each entry being
+each entry being
 
 ```
 - **[<id>](.threads/<id>.md)** — <question>⏎
@@ -114,7 +179,7 @@ followed, when `leaning` is non-empty, by
 ```
 
 The separator in the entry is ` — ` (space, U+2014, space). With no active
-thread, the header is followed by `⏎No active threads.⏎`.
+thread, the groups are replaced by `⏎No active threads.⏎`.
 
 ### `.threads/history/INDEX.md` and `.threads/history/expired/INDEX.md`
 
@@ -137,15 +202,40 @@ and for `.threads/history/expired/INDEX.md`
 > and this index is rebuilt on the next upkeep.⏎
 ```
 
-With no thread in the archive, the header is followed by
-`⏎No closed threads.⏎` (history) or `⏎No expired threads.⏎` (expired). The
-entries of a non-empty archive are not part of the contract yet.
+`.threads/history/INDEX.md` lists the threads of `.threads/history/` that
+are not anomalies, in one group per state that has at least one, in this
+order and with these labels, each group shaped as in `THREADS.md`:
+
+| State       | Label       |
+| ----------- | ----------- |
+| `resolved`  | `Resolved`  |
+| `abandoned` | `Abandoned` |
+| `merged`    | `Merged`    |
+
+Each entry is
+
+```
+- **[<id>](<id>.md)** — <question>⏎
+```
+
+followed, when `leaning` is non-empty, by `  - leaning: <leaning>⏎`, then,
+for a `merged` thread, by `  - merged into: <merged_into>⏎`.
+
+`.threads/history/expired/INDEX.md` lists the threads of
+`.threads/history/expired/` that are not anomalies, with no group: the header
+is followed by `⏎`, then one entry per thread, shaped as in the history
+index, followed by the `leaning` line when non-empty, then
+`  - expired: <expired>⏎`.
+
+With no thread to list, the header is followed by `⏎No closed threads.⏎`
+(history) or `⏎No expired threads.⏎` (expired).
 
 ## Operations
 
 Every implementation must offer:
 
-- **Regenerate**: rebuild the generated files of the resolved scope.
+- **Regenerate**: rebuild the generated files of the resolved scope. It
+  writes nothing else: thread files, anomalies included, are left untouched.
 - **Create scope** (`init`), and **create the user scope** (`init user`),
   run on the user's explicit request only:
   - The project scope is created at the git root when the current directory

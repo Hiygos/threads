@@ -37,6 +37,35 @@ class ParseFrontmatter(unittest.TestCase):
     def test_unknown_fields_kept(self):
         self.assertEqual(core.parse_frontmatter("---\nmine: x\n---\n"), {"mine": "x"})
 
+    def test_unknown_fields_preserved_in_order_with_body(self):
+        text = "\ufeff---\r\nid: a\r\nz_mine: 1\r\nstatus: open\r\n---\r\n\r\n## 2026-01-01\r\n\r\nNote.\r\n"
+        fields, body = core.split_thread(text)
+        self.assertEqual(list(fields.items()), [("id", "a"), ("z_mine", "1"), ("status", "open")])
+        self.assertEqual(body, "\r\n## 2026-01-01\r\n\r\nNote.\r\n")
+
+    def test_quotes_protect_whitespace_and_colons(self):
+        self.assertEqual(core.parse_frontmatter("---\nq: \" a: b \"\ne: ''\n---\n"),
+                         {"q": " a: b ", "e": ""})
+
+    def test_rejects_bad_keys_and_unclosed(self):
+        for text in ("---\nId: a\n---\n", "---\n1x: a\n---\n", "---\nid: a\n",
+                     "", "\n---\nid: a\n---\n"):
+            with self.subTest(text=text):
+                self.assertIsNone(core.split_thread(text))
+
+
+class Ids(unittest.TestCase):
+    def test_valid(self):
+        for value in ("a", "cache-policy", "v2", "2026-review", "a-b-c"):
+            with self.subTest(value=value):
+                self.assertTrue(core.valid_id(value))
+
+    def test_invalid(self):
+        for value in ("", "A", "cache_policy", "-a", "a-", "a--b", "a b", "caché", "a.b",
+                      "a\n"):
+            with self.subTest(value=value):
+                self.assertFalse(core.valid_id(value))
+
 
 class Regenerate(unittest.TestCase):
     def setUp(self):
@@ -68,11 +97,60 @@ class Regenerate(unittest.TestCase):
         core.regenerate(self.scope)
         self.assertIn("No active threads.", self.index())
 
-    def test_ignores_non_md_and_terminal_states(self):
+    def test_non_thread_entries_are_never_anomalies(self):
         self.put("notes.txt", "x")
-        self.put("a.md", thread_text(**dict(VALID, status="resolved")))
-        core.regenerate(self.scope)
+        self.put(".contract", "not even a number")
+        self.put(".hidden.md", "x")
+        os.makedirs(os.path.join(self.root, ".threads", ".state", "notices"))
+        self.put(os.path.join(".state", "notices", "a.md"), "x")
+        os.mkdir(os.path.join(self.root, ".threads", "folder.md"))
+        self.assertEqual(core.regenerate(self.scope).anomalies, [])
         self.assertIn("No active threads.", self.index())
+
+    def test_terminal_state_in_active_folder_is_an_anomaly(self):
+        self.put("a.md", thread_text(**dict(VALID, status="resolved")))
+        result = core.regenerate(self.scope)
+        self.assertEqual([(a.rel, a.reason) for a in result.anomalies],
+                         [(".threads/a.md", "status `resolved` does not belong in `.threads/`")])
+        self.assertIn("No active threads.", self.index())
+
+    def test_all_missing_fields_listed(self):
+        self.put("a.md", thread_text(id="a", status="merged", opened="2026-01-01"))
+        reason = core.scan(self.scope).anomalies[0].reason
+        self.assertEqual(reason, "missing required fields `touched`, `question`, `merged_into`")
+
+    def test_conditional_fields_elsewhere_tolerated(self):
+        # A reopened retired proposal keeps `expired`; a stray `merged_into` is ignored.
+        self.put("a.md", thread_text(**dict(VALID, expired="2026-01-05", merged_into="b")))
+        self.assertEqual([t.id for t in core.scan(self.scope).active], ["a"])
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root reads anything")
+    def test_unreadable_file(self):
+        self.put("a.md", thread_text(**VALID))
+        path = os.path.join(self.root, ".threads", "a.md")
+        os.chmod(path, 0)
+        try:
+            self.assertEqual(core.scan(self.scope).anomalies[0].reason, "cannot be read")
+        finally:
+            os.chmod(path, 0o644)
+
+    def test_anomalous_files_untouched(self):
+        self.put("Bad.md", "junk")
+        path = os.path.join(self.root, ".threads", "Bad.md")
+        os.utime(path, (0, 0))
+        core.regenerate(self.scope)
+        self.assertEqual(os.stat(path).st_mtime, 0)
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "junk")
+        self.assertIn("- `.threads/Bad.md` — frontmatter missing or not the flat subset\n",
+                      self.index())
+
+    def test_archive_indexes_only_where_folders_exist(self):
+        core.regenerate(self.scope)
+        self.assertEqual(os.listdir(os.path.join(self.root, ".threads")), [])
+        os.mkdir(os.path.join(self.root, ".threads", "history"))
+        core.regenerate(self.scope)
+        self.assertEqual(os.listdir(os.path.join(self.root, ".threads", "history")), ["INDEX.md"])
 
     def test_unchanged_index_not_rewritten(self):
         self.put("a.md", thread_text(**VALID))

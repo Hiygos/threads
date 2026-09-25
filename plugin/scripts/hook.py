@@ -19,8 +19,8 @@ import threads_core  # noqa: E402
 
 
 def session_start(scope, payload):
-    threads_core.regenerate(scope)
-    listing = threads_core.render_index(threads_core.scan_active(scope))
+    # The injection is THREADS.md's text for now, anomalies included.
+    listing = threads_core.render_index(threads_core.regenerate(scope))
     return {"hookSpecificOutput": {"hookEventName": "SessionStart",
                                    "additionalContext": listing}}
 

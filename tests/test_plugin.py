@@ -80,7 +80,7 @@ class PluginHooks(unittest.TestCase):
         return output["additionalContext"]
 
     def listing(self):
-        return core.render_index(core.scan_active(core.resolve_scope(self.work, {"HOME": os.path.join(self.tmp.name, "home")})))
+        return core.render_index(core.scan(core.resolve_scope(self.work, {"HOME": os.path.join(self.tmp.name, "home")})))
 
     def tree(self, root):
         return sorted(os.path.relpath(os.path.join(d, n), root)
@@ -94,6 +94,27 @@ class PluginHooks(unittest.TestCase):
                 context = self.context(self.hook(source=source))
                 self.assertIn(self.listing(), context)
                 self.assertIn("sample", context)
+
+    def test_anomalies_injected_and_files_untouched(self):
+        self.real("python3")
+        self.add_scope()
+        history = os.path.join(self.work, ".threads", "history")
+        os.mkdir(history)
+        broken = {
+            os.path.join(self.work, ".threads", "Broken.md"): b"no frontmatter\n",
+            os.path.join(history, "sample.md"): THREAD.replace("open", "resolved").encode(),
+        }
+        for path, data in broken.items():
+            with open(path, "wb") as f:
+                f.write(data)
+        context = self.context(self.hook())
+        self.assertIn("\n## Anomalies\n", context)
+        for rel in (".threads/Broken.md", ".threads/history/sample.md", ".threads/sample.md"):
+            self.assertIn("- `%s` — " % rel, context)
+        self.assertIn(self.listing(), context)
+        for path, data in broken.items():
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(), data)
 
     def test_session_start_regenerates_index(self):
         self.real("python3")
