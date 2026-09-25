@@ -15,6 +15,14 @@ here), so it must work on its own, with nothing from the rest of the repo.
 - `skills/init/SKILL.md` — `/threads:init [user]`, user-invoked only; its body
   runs `guard.sh init $ARGUMENTS` through `!` injection and the model only
   reports the output.
+- `skills/threads/SKILL.md` — the model-invoked `threads` skill the injected
+  rules point to: the full agent-facing contract and the procedures needing
+  judgement (open, close and archive, defer, reject, anomalies, acknowledging
+  notices, what not to do); hook-done work is one line each. Instructions,
+  not contract: it names no mechanism the agent never touches.
+- `skills/threads/references/` — loaded on demand from `SKILL.md`:
+  `merge.md`, `reopen.md` (from either archive, always back as `open`),
+  `migrate.md` (a hand-rolled setup onto the plugin).
 - `scripts/guard.sh` — the `sh` guard: finds Python ≥3.9 (`python3`, then
   `python`) and runs `hook.py`; without one, SessionStart injects the single
   "inactive" line, `init` and `ack` print it as plain text, and every other
@@ -79,5 +87,6 @@ here), so it must work on its own, with nothing from the rest of the repo.
 
 ## Verification
 
-- `python3 -m unittest`: `tests/test_plugin.py` (guard, hook I/O) and the
-  conformance suite's `plugin` adapter.
+- `python3 -m unittest`: `tests/test_plugin.py` (guard, hook I/O, the
+  `threads` skill's files) and the conformance suite's `plugin` adapter.
+- `claude plugin validate plugin` checks the manifest and skill layout.

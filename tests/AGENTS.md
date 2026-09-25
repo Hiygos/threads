@@ -15,7 +15,9 @@ runs every case against every implementation.
   retaken per source, marker pruning), the skipped-question stash (candidate
   extraction and caps, consumed by UserPromptSubmit, never stale, orphan
   pruning; `CLAUDE_PLUGIN_DATA` is a temp folder), and a read-only scope left untouched
-  down to `.state/plugin/` and mtimes (which conformance does not compare).
+  down to `.state/plugin/` and mtimes (which conformance does not compare),
+  and the `threads` skill's files (frontmatter, linked references present,
+  no mechanism term such as `snapshot` or `stash` in its text).
 - `test_skill.py` — the skill script's `start` snapshot and `check`.
 - `conformance/` — the harness (`harness.py`) and one folder per case under
   `conformance/cases/` (`before/`, `after/`, `case.json`; format in the

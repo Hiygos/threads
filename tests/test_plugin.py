@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -611,6 +612,52 @@ class PluginHooks(unittest.TestCase):
         self.real("python")
         self.add_scope()
         self.assertIn(self.listing(), self.context(self.hook()))
+
+
+class PluginSkill(unittest.TestCase):
+    """The model-invoked `threads` skill: its files and what it must not mention."""
+
+    SKILL = os.path.join(PLUGIN, "skills", "threads")
+    # Mechanism the agent never touches, which the skill's text must not name.
+    FORBIDDEN = ("marker", "snapshot", "stash", "mtime", "CLAUDE_PLUGIN_DATA")
+
+    def read(self, path):
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    def frontmatter(self, text):
+        lines = text.split("\n")
+        self.assertEqual(lines[0], "---")
+        end = lines.index("---", 1)
+        fields = {}
+        for line in lines[1:end]:
+            key, sep, value = line.partition(":")
+            self.assertTrue(sep, line)
+            fields[key.strip()] = value.strip()
+        return fields
+
+    def test_skill_frontmatter(self):
+        fields = self.frontmatter(self.read(os.path.join(self.SKILL, "SKILL.md")))
+        self.assertEqual(fields.get("name"), "threads")
+        self.assertTrue(fields.get("description"))
+        self.assertNotIn("disable-model-invocation", fields)
+
+    def test_linked_references_exist(self):
+        body = self.read(os.path.join(self.SKILL, "SKILL.md"))
+        links = set(re.findall(r"\]\((references/[^)]+\.md)\)", body))
+        self.assertEqual(links, {"references/merge.md", "references/reopen.md",
+                                 "references/migrate.md"})
+        for link in links:
+            self.assertTrue(os.path.isfile(os.path.join(self.SKILL, link)), link)
+
+    def test_no_forbidden_terms(self):
+        paths = [os.path.join(self.SKILL, "SKILL.md")]
+        refs = os.path.join(self.SKILL, "references")
+        paths += [os.path.join(refs, n) for n in sorted(os.listdir(refs)) if n.endswith(".md")]
+        for path in paths:
+            text = self.read(path).lower()
+            for term in self.FORBIDDEN:
+                self.assertNotIn(term.lower(), text, "%s in %s" % (term, path))
 
 
 if __name__ == "__main__":
