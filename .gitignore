@@ -2,3 +2,4 @@
 __pycache__/
 .threads/
 THREADS.md
+.claude/
