@@ -18,7 +18,11 @@ runs every case against every implementation.
   down to `.state/plugin/` and mtimes (which conformance does not compare),
   and the `threads` skill's files (frontmatter, linked references present,
   no mechanism term such as `snapshot` or `stash` in its text).
-- `test_skill.py` — the skill script's `start` snapshot and `check`.
+- `test_skill.py` — the skill script's `start` snapshot and `check`, `init`'s
+  lost-guarantees notice (exactly once), idempotent marker-delimited
+  `snippet` insertion (missing file, existing file, older or duplicated
+  block, CRLF, unpaired markers, symlink), `SKILL.md`'s frontmatter and
+  links, and `start` run from a copy of `skill/` alone (ack line included).
 - `conformance/` — the harness (`harness.py`) and one folder per case under
   `conformance/cases/` (`before/`, `after/`, `case.json`; format in the
   harness docstring, with how each operation maps to a plugin entry point:
@@ -31,7 +35,10 @@ runs every case against every implementation.
   Implementation-private state (`.threads/.state/plugin|skill/`, and a
   `.threads/.state/` holding nothing else) is left out of the comparison.
   Adapter output is compared with the sandbox path written as `{sandbox}`,
-  and each adapter's ack command prefix as `{threads}`. `start` is compared
+  and each adapter's ack command prefix as `{threads}` (the skill's is the
+  interpreter running the tests plus the script). The skill's `init` is
+  compared up to its skill-only text (from the blank line before its first
+  `# ` line). `start` is compared
   on the briefing's data sections: the plugin's SessionStart context minus
   its rules section (the `# ` section right before the listing).
 

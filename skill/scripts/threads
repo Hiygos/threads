@@ -2,9 +2,11 @@
 """threads: the skill's upkeep script, run by the agent itself.
 
 A thin adapter over threads_core (packaged beside this file). `init [user]`
-creates a scope; every other subcommand works on the scope resolved from the
-current directory, runs the core's upkeep first, and is silent when no scope
-exists. `start` prints the briefing (its data sections: the rules are in
+creates a scope, then prints what this skill cannot guarantee and the
+recommended snippet; `snippet [<file>]` prints that snippet, or writes it into
+an instructions file between its markers (idempotent). Every other subcommand
+works on the scope resolved from the current directory, runs the core's
+upkeep first, and is silent when no scope exists. `start` prints the briefing (its data sections: the rules are in
 SKILL.md) and snapshots `.threads/`; `check` lists the threads modified since
 that snapshot that are still hanging. `ack <id>|all` acknowledges retirement notices, after the agent
 has told the user about them. In a scope with a newer or unreadable
@@ -18,8 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import threads_core  # noqa: E402
 
-USAGE = ("usage: threads init [user] | threads start | threads check | threads regen"
-         " | threads ack <id>|all\n")
+USAGE = ("usage: threads init [user] | threads snippet [<file>] | threads start"
+         " | threads check | threads regen | threads ack <id>|all\n")
 
 # The one snapshot `start` takes and `check` compares with.
 SNAPSHOT = os.path.join(".state", "skill", "snapshot.json")  # inside `.threads/`
@@ -35,6 +37,55 @@ CHECK_HEADER = (
 NO_SNAPSHOT = "No snapshot to compare with: run `threads start` first.\n"
 
 SCRIPT = os.path.abspath(__file__)
+# The interpreter running this script, so an ack command line works wherever
+# this one did (`python` under Git Bash, a versioned or absolute path).
+INTERPRETER = sys.executable or "python3"
+
+# Skill-only text after `init`'s outcome; it starts with a `# ` line.
+LIMITS = (
+    "# What this skill cannot guarantee\n"
+    "\n"
+    "No hooks run for this skill: upkeep happens only when the agent runs this script.\n"
+    "\n"
+    "- Nothing expires unless a script runs: an unconfirmed proposal is retired at the\n"
+    "  first `start`, `check`, `regen` or `ack` after its 3 days, not on time.\n"
+    "- No forced outcome at end of turn: `check` lists the threads left hanging, but\n"
+    "  nothing stops a reply that skips it.\n"
+    "- Retirement notices surface only at the next `start`.\n"
+    "- No skipped-proposal detection: a proposal the user leaves unanswered is not\n"
+    "  caught by any script.\n"
+    "\n"
+    "Tell the user this once, now.\n"
+)
+
+BEGIN = "<!-- threads:begin -->"
+END = "<!-- threads:end -->"
+# A pointer, not the contract: the skill carries the rules.
+SNIPPET = (
+    BEGIN + "\n"
+    "## Threads\n"
+    "\n"
+    "Open questions with a provisional position are kept as threads in `.threads/`.\n"
+    "\n"
+    "- At the start of every session, run the `threads` skill's `start` script and\n"
+    "  read its briefing.\n"
+    "- Before the final reply of any task that wrote to `.threads/`, run its `check`\n"
+    "  script and declare the outcome of each thread it lists.\n"
+    "- For anything else about threads, load the `threads` skill.\n"
+    + END + "\n"
+)
+
+SETUP = (
+    "# Recommended snippet\n"
+    "\n"
+    "Strongly recommended: propose adding the snippet below to the instructions file\n"
+    "the harness always loads for this scope (references/harnesses.md), so that every\n"
+    "session starts with `threads start`. Write it only on the user's yes, with\n"
+    "`threads snippet <absolute path of that file>`: it replaces an earlier copy\n"
+    "between the markers instead of adding a second one. A project instructions file\n"
+    "is committed with the repository: say so before writing to it.\n"
+    "\n"
+)
 
 
 def cmd_init(args):
@@ -42,13 +93,74 @@ def cmd_init(args):
         sys.stderr.write(USAGE)
         return 2
     created, text = threads_core.run_init(os.getcwd(), user=bool(args))
-    sys.stdout.write(text)
+    # Also on a refusal: the scope may exist for another harness, not this one.
+    sys.stdout.write(text + "\n" + LIMITS + "\n" + SETUP + SNIPPET)
     return 0 if created else 1
+
+
+def place_snippet(text):
+    """`text` with the snippet in place, and what changed; None if the markers are broken.
+
+    The first marked block is replaced and any later one removed; with none,
+    the snippet is appended after a blank line. Line endings follow the file.
+    """
+    nl = "\r\n" if "\r\n" in text else "\n"
+    block = SNIPPET.replace("\n", nl)
+    lines = text.splitlines(True)
+    marks = [(i, line.strip()) for i, line in enumerate(lines) if line.strip() in (BEGIN, END)]
+    if [m for _, m in marks] != [BEGIN, END] * (len(marks) // 2):
+        return None, None
+    if not marks:
+        if text and not text.endswith(("\n", "\r")):
+            text += nl
+        return text + (nl if text else "") + block, "added"
+    spans = [(marks[k][0], marks[k + 1][0]) for k in range(0, len(marks), 2)]
+    out = lines[:spans[0][0]] + [block]
+    for (_, end), nxt in zip(spans, spans[1:] + [(len(lines), None)]):
+        out += lines[end + 1:nxt[0]]
+    new = "".join(out)
+    return new, "unchanged" if new == text else "updated"
+
+
+def cmd_snippet(args):
+    if not args:
+        sys.stdout.write(SNIPPET)
+        return 0
+    if len(args) != 1:
+        sys.stderr.write(USAGE)
+        return 2
+    # Through a symlink (e.g. `CLAUDE.md` -> `AGENTS.md`), write its target.
+    path = os.path.realpath(os.path.abspath(args[0]))
+    try:
+        with open(path, "rb") as f:
+            text = f.read().decode("utf-8")
+        mode = os.stat(path).st_mode
+    except FileNotFoundError:
+        text, mode = "", None
+    except (OSError, UnicodeDecodeError) as error:
+        sys.stdout.write("Not written: cannot read %s (%s)\n" % (path, error))
+        return 1
+    new, change = place_snippet(text)
+    if new is None:
+        sys.stdout.write("Not written: %s has unpaired threads markers; fix them by hand\n"
+                         % path)
+        return 1
+    if change != "unchanged":
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        threads_core.write_atomic(path, new)
+        if mode is not None:
+            os.chmod(path, mode & 0o7777)
+    sys.stdout.write({"added": "Added the threads snippet to %s\n",
+                      "updated": "Updated the threads snippet in %s\n",
+                      "unchanged": "The threads snippet in %s is already up to date\n"}[change]
+                     % path)
+    return 0
 
 
 def ack_command(scope, target):
     """The exact shell command line that acknowledges `target` in `scope`."""
-    return "cd %s && python3 %s ack %s" % (shlex.quote(scope.root), shlex.quote(SCRIPT), target)
+    return "cd %s && %s %s ack %s" % (shlex.quote(scope.root), shlex.quote(INTERPRETER),
+                                      shlex.quote(SCRIPT), target)
 
 
 def cmd_start(scope, args):
@@ -110,6 +222,8 @@ COMMANDS = {"start": cmd_start, "check": cmd_check, "regen": cmd_regen, "ack": c
 def main(argv):
     if argv and argv[0] == "init":
         return cmd_init(argv[1:])
+    if argv and argv[0] == "snippet":
+        return cmd_snippet(argv[1:])
     if not argv or argv[0] not in COMMANDS:
         sys.stderr.write(USAGE)
         return 2

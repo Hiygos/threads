@@ -36,7 +36,10 @@ separated):
 Adapters:
 
 - `skill` runs `skill/scripts/threads <operation>` in the start directory;
-  its stdout is compared with `stdout`.
+  its stdout is compared with `stdout`. For `init`, only the outcome is
+  compared: the skill-only text it prints after it (what the skill cannot
+  guarantee, the recommended snippet), from the blank line before its first
+  `# ` line, is left out.
 - `plugin` runs the entry point its operation maps to in `PLUGIN_ENTRIES`,
   always through the real `sh` guard, in the start directory:
   - `("hook", event, field)`: the hook, with the hook input JSON on stdin
@@ -64,7 +67,7 @@ Adapters:
     SessionStart gives for each retirement notice.
 
 Each adapter's own command prefix in the ack command lines of a briefing
-(`python3 <script>` for the skill, `sh <guard.sh>` for the plugin) is
+(`<interpreter> <script>` for the skill, `sh <guard.sh>` for the plugin) is
 replaced by `{threads}`, so both compare with one golden.
 """
 import json
@@ -142,7 +145,7 @@ def base_env(case, sandbox, home):
 
 
 # Each adapter's command prefix in an ack command line (see the docstring).
-SKILL_COMMAND = "python3 " + shlex.quote(SKILL_SCRIPT)
+SKILL_COMMAND = shlex.quote(sys.executable) + " " + shlex.quote(SKILL_SCRIPT)
 PLUGIN_COMMAND = "sh " + shlex.quote(PLUGIN_GUARD)
 
 
@@ -160,8 +163,11 @@ def run_skill(start, env, case, operation=None):
         [sys.executable, SKILL_SCRIPT] + (operation or case["operation"]),
         cwd=start, env=env, capture_output=True,
     )
-    out = proc.stdout.decode("utf-8").replace(SKILL_COMMAND, "{threads}")
-    return Result(proc.returncode, out, proc.stderr.decode("utf-8"), out)
+    raw = proc.stdout.decode("utf-8").replace(SKILL_COMMAND, "{threads}")
+    out = raw
+    if (operation or case["operation"])[0] == "init":
+        out = raw[:raw.index("\n# ")] if "\n# " in raw else raw
+    return Result(proc.returncode, out, proc.stderr.decode("utf-8"), raw)
 
 
 def run_plugin(start, env, case, operation=None):
