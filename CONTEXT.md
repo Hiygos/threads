@@ -35,7 +35,7 @@ Something true regardless of the work in progress; not a thread.
 The one place a session's threads live: the **project scope** or the **user scope**, never both at once. A scope exists exactly when its `.threads/` folder exists, and only the user creates one.
 
 **Project root**:
-The nearest folder, from where the session starts upward, that holds a `.threads/`; the project scope lives there.
+The nearest folder, from where the session starts upward, that holds a `.threads/` (or, in a linked git worktree without one, the main worktree's root); the project scope lives there.
 _Avoid_: working directory, cwd
 
 **User scope**:
