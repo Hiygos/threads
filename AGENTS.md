@@ -25,14 +25,22 @@ contract.
   the plugin injects into a session.
 - **Self-contained plugin.** Installing it must not require editing the user's
   `CLAUDE.md`; the plugin carries its own contract.
+- **`CONTRACT.md` is the normative contract.** It grows with the code: a rule
+  lands there in the same commit as the conformance cases that check it.
 
 ## Work Guidance
 
 ## Verification
 
+- `python3 -m unittest` from the repo root: core, packaging and conformance.
+  CI runs it on Ubuntu and macOS × Python 3.9 and latest.
+
 ## Child DOX Index
 
+- [`core/`](core/AGENTS.md) — the single source of the shared core; packaged copies are never edited.
 - [`docs/`](docs/AGENTS.md) — agent-facing config (`docs/agents/`) and ADRs (`docs/adr/`, created lazily).
+- [`skill/`](skill/AGENTS.md) — the skill for any harness, as installed; so far the `threads` script.
+- [`tests/`](tests/AGENTS.md) — unit, packaging and conformance tests; goldens change only with `--update`.
 
 ## Agent skills
 
