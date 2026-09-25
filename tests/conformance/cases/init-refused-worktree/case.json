@@ -1,0 +1,15 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "init"
+  ],
+  "stdout": "Not created: this directory is already covered by the scope at {sandbox}/main\n",
+  "refusal": "{sandbox}/main",
+  "git": [
+    "main"
+  ],
+  "worktrees": {
+    "wt": "main"
+  },
+  "cwd": "wt"
+}

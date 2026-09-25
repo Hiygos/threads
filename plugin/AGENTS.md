@@ -10,10 +10,15 @@ here), so it must work on its own, with nothing from the rest of the repo.
 
 - `.claude-plugin/plugin.json` — the plugin manifest.
 - `hooks/hooks.json` — hook declarations; every command runs through the guard.
+- `skills/init/SKILL.md` — `/threads:init [user]`, user-invoked only; its body
+  runs `guard.sh init $ARGUMENTS` through `!` injection and the model only
+  reports the output.
 - `scripts/guard.sh` — the `sh` guard: finds Python ≥3.9 (`python3`, then
   `python`) and runs `hook.py`; without one, SessionStart injects the single
-  "inactive" line and every other hook exits 0 silently.
-- `scripts/hook.py` — the hook adapter, a thin layer over the core.
+  "inactive" line, `init` prints it as plain text, and every other hook
+  exits 0 silently.
+- `scripts/hook.py` — the adapter, a thin layer over the core: hook entry
+  points (`hook.py <HookEventName>`) and `hook.py init [user]`.
 - `scripts/threads_core.py` — packaged copy of `core/threads_core.py`; never
   edited here (see `core/AGENTS.md`).
 
@@ -26,6 +31,9 @@ here), so it must work on its own, with nothing from the rest of the repo.
 - `guard.sh` uses shell builtins only (it must run with a bare `PATH`).
 - Hooks so far: SessionStart (every source) regenerates the generated files
   and injects the thread listing as `additionalContext`.
+- `/threads:init` resolves from the session's current directory and always
+  exits 0, a refusal included: a non-zero exit in `!` injection makes Claude
+  Code fail the skill instead of passing the outcome to the model.
 
 ## Verification
 

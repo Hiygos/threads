@@ -14,6 +14,10 @@ CONTRACT_VERSION = 1
 
 THREADS_DIR = ".threads"
 INDEX_FILE = "THREADS.md"
+HISTORY_DIR = "history"  # inside `.threads/`
+EXPIRED_DIR = "expired"  # inside `.threads/history/`
+ARCHIVE_INDEX_FILE = "INDEX.md"
+CONTRACT_FILE = ".contract"  # inside `.threads/`
 USER_ROOT_ENV = "THREADS_USER_ROOT"
 DEFAULT_USER_ROOT = ".agents"  # relative to the home directory
 
@@ -25,6 +29,25 @@ INDEX_HEADER = (
     "\n"
     "> Generated from `.threads/`. Do not edit by hand: edit the thread files,\n"
     "> and this index is rebuilt on the next upkeep.\n"
+)
+
+HISTORY_INDEX_HEADER = (
+    "# History\n"
+    "\n"
+    "> Generated from `.threads/history/`. Do not edit by hand: edit the thread files,\n"
+    "> and this index is rebuilt on the next upkeep.\n"
+)
+
+EXPIRED_INDEX_HEADER = (
+    "# Expired\n"
+    "\n"
+    "> Generated from `.threads/history/expired/`. Do not edit by hand: edit the thread files,\n"
+    "> and this index is rebuilt on the next upkeep.\n"
+)
+
+USER_SCOPE_NOTICE = (
+    "The user scope is outside the project, so some harnesses ask for approval\n"
+    "before writing to it; allow %s once in the harness's settings to avoid it.\n"
 )
 
 # Group order and labels of THREADS.md are normative (CONTRACT.md).
@@ -54,6 +77,26 @@ class Scope:
     @property
     def index_path(self):
         return os.path.join(self.root, INDEX_FILE)
+
+    @property
+    def history_dir(self):
+        return os.path.join(self.threads_dir, HISTORY_DIR)
+
+    @property
+    def expired_dir(self):
+        return os.path.join(self.history_dir, EXPIRED_DIR)
+
+    @property
+    def contract_path(self):
+        return os.path.join(self.threads_dir, CONTRACT_FILE)
+
+
+class ScopeExists(Exception):
+    """Scope creation refused: `scope` already covers the start directory."""
+
+    def __init__(self, scope):
+        Exception.__init__(self, scope.root)
+        self.scope = scope
 
 
 class Thread:
@@ -150,6 +193,27 @@ def _user_root(env):
     return os.path.join(home, DEFAULT_USER_ROOT)
 
 
+def _context(start, env):
+    """The environment, the real start directory and the real home (or None)."""
+    env = os.environ if env is None else env
+    home = env.get("HOME") or os.path.expanduser("~")
+    home = os.path.realpath(home) if os.path.isabs(home) else None
+    return env, os.path.realpath(start), home
+
+
+def _project_scope(start, home, env):
+    """The project scope covering `start` (or None), and the git root (or None)."""
+    folders, git_root = _project_candidates(start, home)
+    for folder in folders:
+        if _has_threads(folder):
+            return Scope(folder), git_root
+    if git_root is not None:
+        main = _main_worktree_root(git_root, env)
+        if main is not None and _has_threads(main):
+            return Scope(main), git_root
+    return None, git_root
+
+
 def resolve_scope(start, env=None):
     """The scope for a session started in `start`, or None when inactive.
 
@@ -157,22 +221,60 @@ def resolve_scope(start, env=None):
     linked worktree), else the user scope, else None. Never both. `env`
     (default `os.environ`) supplies HOME and THREADS_USER_ROOT.
     """
-    env = os.environ if env is None else env
-    start = os.path.realpath(start)
-    home = env.get("HOME") or os.path.expanduser("~")
-    home = os.path.realpath(home) if os.path.isabs(home) else None
-    folders, git_root = _project_candidates(start, home)
-    for folder in folders:
-        if _has_threads(folder):
-            return Scope(folder)
-    if git_root is not None:
-        main = _main_worktree_root(git_root, env)
-        if main is not None and _has_threads(main):
-            return Scope(main)
+    env, start, home = _context(start, env)
+    scope, _ = _project_scope(start, home, env)
+    if scope is not None:
+        return scope
     root = _user_root(env)
     if _has_threads(root):
         return Scope(root, kind="user")
     return None
+
+
+def create_scope(start, user=False, env=None):
+    """Create a scope's skeleton and return the new Scope.
+
+    The project scope goes at the git root inside a repository, at `start`
+    otherwise; with `user`, the user scope goes under the user root. Raises
+    ScopeExists, writing nothing, when a project scope already covers `start`
+    (or, with `user`, when the user scope exists).
+    """
+    env, start, home = _context(start, env)
+    if user:
+        scope = Scope(_user_root(env), kind="user")
+        if _has_threads(scope.root):
+            raise ScopeExists(scope)
+    else:
+        found, git_root = _project_scope(start, home, env)
+        if found is not None:
+            raise ScopeExists(found)
+        scope = Scope(git_root or start)
+    os.makedirs(scope.root, exist_ok=True)
+    try:
+        os.mkdir(scope.threads_dir)
+    except FileExistsError:
+        raise ScopeExists(scope)  # Created meanwhile by someone else.
+    os.makedirs(scope.expired_dir, exist_ok=True)
+    write_atomic(scope.contract_path, render_contract())
+    write_atomic(os.path.join(scope.history_dir, ARCHIVE_INDEX_FILE), render_history_index())
+    write_atomic(os.path.join(scope.expired_dir, ARCHIVE_INDEX_FILE), render_expired_index())
+    regenerate(scope)
+    return scope
+
+
+def run_init(start, user=False, env=None):
+    """Create a scope for an adapter: (created, text to show the user)."""
+    try:
+        scope = create_scope(start, user, env)
+    except ScopeExists as refused:
+        found = refused.scope
+        if found.kind == "user":
+            return False, "Not created: the user scope already exists at %s\n" % found.root
+        return False, "Not created: this directory is already covered by the scope at %s\n" % found.root
+    text = "Created the %s scope at %s\n" % (scope.kind, scope.root)
+    if scope.kind == "user":
+        text += USER_SCOPE_NOTICE % scope.root
+    return True, text
 
 
 def parse_frontmatter(text):
@@ -245,6 +347,21 @@ def render_index(threads):
     if not threads:
         out.append("\nNo active threads.\n")
     return "".join(out)
+
+
+def render_contract():
+    """The exact content of `.threads/.contract`."""
+    return "%d\n" % CONTRACT_VERSION
+
+
+def render_history_index():
+    """The normative text of `.threads/history/INDEX.md` with no closed thread."""
+    return HISTORY_INDEX_HEADER + "\nNo closed threads.\n"
+
+
+def render_expired_index():
+    """The normative text of `.threads/history/expired/INDEX.md` with no retired thread."""
+    return EXPIRED_INDEX_HEADER + "\nNo expired threads.\n"
 
 
 def write_atomic(path, text):

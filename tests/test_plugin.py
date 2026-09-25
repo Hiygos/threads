@@ -63,6 +63,17 @@ class PluginHooks(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout.decode("utf-8")
 
+    def init(self, *args):
+        """Run `/threads:init`'s command the way its `!` injection does."""
+        env = dict(os.environ, PATH=self.bin, HOME=os.path.join(self.tmp.name, "home"))
+        env.pop("THREADS_USER_ROOT", None)
+        proc = subprocess.run(
+            ["/bin/sh", os.path.join(self.plugin, "scripts", "guard.sh"), "init"] + list(args),
+            cwd=self.work, env=env, capture_output=True, stdin=subprocess.DEVNULL,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout.decode("utf-8")
+
     def context(self, out):
         output = json.loads(out)["hookSpecificOutput"]
         self.assertEqual(output["hookEventName"], "SessionStart")
@@ -102,6 +113,29 @@ class PluginHooks(unittest.TestCase):
         before = self.tree(self.plugin)
         self.hook()
         self.assertEqual(self.tree(self.plugin), before)
+
+    def test_init_creates_and_refuses_with_exit_0(self):
+        self.real("python3")
+        before = self.tree(self.plugin)
+        self.assertIn(os.path.realpath(self.work), self.init())
+        self.assertTrue(os.path.isfile(os.path.join(self.work, ".threads", ".contract")))
+        self.assertIn(os.path.realpath(self.work), self.init())
+        self.assertEqual(self.tree(self.plugin), before)
+
+    def test_init_bad_argument_writes_nothing(self):
+        self.real("python3")
+        self.assertIn("usage", self.init("nope"))
+        self.assertEqual(os.listdir(self.work), [])
+
+    def test_init_skill_runs_the_guard(self):
+        with open(os.path.join(self.plugin, "skills", "init", "SKILL.md"), encoding="utf-8") as f:
+            body = f.read()
+        self.assertIn('!`sh "${CLAUDE_PLUGIN_ROOT}/scripts/guard.sh" init $ARGUMENTS`', body)
+        self.assertIn("disable-model-invocation: true", body)
+
+    def test_init_python_missing(self):
+        self.assertEqual(self.init(), INACTIVE + "\n")
+        self.assertEqual(os.listdir(self.work), [])
 
     def test_python_missing(self):
         self.add_scope()

@@ -1,0 +1,13 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "init",
+    "user"
+  ],
+  "stdout": "Created the user scope at {sandbox}/home/.agents\nThe user scope is outside the project, so some harnesses ask for approval\nbefore writing to it; allow {sandbox}/home/.agents once in the harness's settings to avoid it.\n",
+  "refusal": null,
+  "env": {
+    "HOME": "{sandbox}/home"
+  },
+  "cwd": "home/proj"
+}

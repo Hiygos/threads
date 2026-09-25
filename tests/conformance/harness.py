@@ -7,7 +7,9 @@ starts), `after/` (the sandbox as it must end) and `case.json`:
 
 `operation` is the skill's subcommand line; each adapter maps it to its own
 entry point. `refusal` is null when the operation must succeed, otherwise a
-string the refusal output must contain. Empty folders in fixtures carry a
+string the refusal output must contain. In every adapter's stdout and stderr
+the sandbox's absolute path is replaced by `{sandbox}` (and the default
+`HOME`'s by `{home}`) before comparing, so `stdout` and `refusal` may use them. Empty folders in fixtures carry a
 `.gitkeep`, ignored by the comparison. Goldens change only with `--update`.
 
 Optional keys, for scope resolution (paths are relative to the sandbox, `/`
@@ -30,14 +32,22 @@ Adapters:
 
 - `skill` runs `skill/scripts/threads <operation>` in the start directory;
   its stdout is compared with `stdout`.
-- `plugin` runs the hook its operation maps to in `PLUGIN_HOOKS`, through the
-  real `sh` guard, with the hook input JSON on stdin (`cwd` = the
-  start directory). Each entry is `(hook event, output field)`: the field of
-  `hookSpecificOutput` compared with `stdout`, or None when the hook's output
-  has no counterpart of the skill's stdout, in which case only the exit code
-  and the files on disk are compared. `regen` maps to SessionStart, which
-  regenerates the generated files before injecting the listing; the listing
-  itself is not the skill's `regen` output, so it is not compared here.
+- `plugin` runs the entry point its operation maps to in `PLUGIN_ENTRIES`,
+  always through the real `sh` guard, in the start directory:
+  - `("hook", event, field)`: the hook, with the hook input JSON on stdin
+    (`cwd` = the start directory). `field` is the field of
+    `hookSpecificOutput` compared with `stdout`, or None when the hook's
+    output has no counterpart of the skill's stdout, in which case only the
+    exit code and the files on disk are compared. `regen` maps to
+    SessionStart, which regenerates the generated files before injecting the
+    listing; the listing itself is not the skill's `regen` output, so it is
+    not compared here.
+  - `("skill", name)`: the command a plugin skill's body runs through `!`
+    injection (`sh guard.sh <name> <operation arguments>`), whose stdout is
+    compared with `stdout`. Such a command exits 0 on a refusal too (a
+    non-zero exit makes Claude Code fail the skill instead of showing the
+    outcome), so only the skill adapter's refusals must exit non-zero.
+    `init` maps to `/threads:init`'s command.
 """
 import json
 import os
@@ -51,9 +61,11 @@ CASES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cases")
 SKILL_SCRIPT = os.path.join(REPO, "skill", "scripts", "threads")
 PLUGIN_GUARD = os.path.join(REPO, "plugin", "scripts", "guard.sh")
 
-# Skill operation -> (plugin hook event, hookSpecificOutput field compared
-# with the case's stdout, or None when not comparable).
-PLUGIN_HOOKS = {"regen": ("SessionStart", None)}
+# Skill operation -> plugin entry point (see the module docstring).
+PLUGIN_ENTRIES = {
+    "regen": ("hook", "SessionStart", None),
+    "init": ("skill", "init"),
+}
 
 KEEP = ".gitkeep"
 # Implementation-private state is not part of the contract, wherever the
@@ -72,11 +84,22 @@ class Result:
     `raw` is everything the adapter wrote to stdout.
     """
 
-    def __init__(self, code, stdout, stderr, raw):
+    def __init__(self, code, stdout, stderr, raw, refusal_exits_nonzero=True):
         self.code = code
         self.stdout = stdout
         self.stderr = stderr
         self.raw = raw
+        self.refusal_exits_nonzero = refusal_exits_nonzero
+
+    def normalize(self, paths):
+        """Replace each `(absolute path, placeholder)` in the captured output."""
+        def sub(text):
+            if text is None:
+                return None
+            for path, placeholder in paths:
+                text = text.replace(path, placeholder)
+            return text
+        self.stdout, self.stderr, self.raw = sub(self.stdout), sub(self.stderr), sub(self.raw)
 
 
 def base_env(case, sandbox, home):
@@ -105,7 +128,16 @@ def run_skill(start, env, case):
 
 
 def run_plugin(start, env, case):
-    event, field = PLUGIN_HOOKS[case["operation"][0]]
+    entry = PLUGIN_ENTRIES[case["operation"][0]]
+    if entry[0] == "skill":
+        proc = subprocess.run(
+            ["sh", PLUGIN_GUARD, entry[1]] + case["operation"][1:],
+            cwd=start, env=env, capture_output=True, stdin=subprocess.DEVNULL,
+        )
+        out = proc.stdout.decode("utf-8")
+        return Result(proc.returncode, out, proc.stderr.decode("utf-8"), out,
+                      refusal_exits_nonzero=False)
+    _, event, field = entry
     payload = {"session_id": "conformance", "hook_event_name": event, "cwd": start}
     if event == "SessionStart":
         payload["source"] = "startup"
@@ -211,6 +243,7 @@ def run_case(name, adapter):
             setup_git(sandbox, case, env)
         start = os.path.join(sandbox, *case.get("cwd", ".").split("/"))
         result = ADAPTERS[adapter](start, env, case)
+        result.normalize([(sandbox, "{sandbox}"), (home, "{home}")])
         tree = snapshot(sandbox)
     if UPDATE and adapter == REFERENCE:
         write_golden(tree, os.path.join(case_dir, "after"))

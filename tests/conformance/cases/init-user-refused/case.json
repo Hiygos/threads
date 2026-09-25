@@ -1,0 +1,13 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "init",
+    "user"
+  ],
+  "stdout": "Not created: the user scope already exists at {sandbox}/home/.agents\n",
+  "refusal": "{sandbox}/home/.agents",
+  "env": {
+    "HOME": "{sandbox}/home"
+  },
+  "cwd": "home/proj"
+}

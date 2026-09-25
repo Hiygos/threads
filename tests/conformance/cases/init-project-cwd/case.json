@@ -1,0 +1,12 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "init"
+  ],
+  "stdout": "Created the project scope at {sandbox}/home/proj/sub\n",
+  "refusal": null,
+  "env": {
+    "HOME": "{sandbox}/home"
+  },
+  "cwd": "home/proj/sub"
+}

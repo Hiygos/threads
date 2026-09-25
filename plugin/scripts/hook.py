@@ -1,8 +1,13 @@
-"""threads: the plugin's hook adapter, run by guard.sh as `hook.py <HookEventName>`.
+"""threads: the plugin's adapter, run by guard.sh.
 
-A thin adapter over threads_core (packaged beside this file). It reads the hook
-input JSON on stdin, resolves the scope from its `cwd`, and is silent when no
-scope exists. Hook JSON output goes to stdout. No state under the plugin root.
+A thin adapter over threads_core (packaged beside this file), with two kinds of
+entry point. `hook.py <HookEventName>` reads the hook input JSON on stdin,
+resolves the scope from its `cwd`, and is silent when no scope exists; hook
+JSON output goes to stdout. `hook.py init [user]` is the body of the
+`/threads:init` skill: it creates a scope from the current directory and
+prints plain text for the model to report, always exiting 0 (a non-zero exit
+would make Claude Code fail the skill instead of showing the outcome).
+No state under the plugin root.
 """
 import json
 import os
@@ -23,7 +28,18 @@ def session_start(scope, payload):
 HOOKS = {"SessionStart": session_start}
 
 
+def init(args):
+    if args not in ([], ["user"]):
+        sys.stdout.write("usage: /threads:init [user]\n")
+        return 0
+    _, text = threads_core.run_init(os.getcwd(), user=bool(args))
+    sys.stdout.write(text)
+    return 0
+
+
 def main(argv):
+    if argv and argv[0] == "init":
+        return init(argv[1:])
     handler = HOOKS.get(argv[0] if argv else "")
     if handler is None:
         return 0

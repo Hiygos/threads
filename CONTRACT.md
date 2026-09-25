@@ -13,9 +13,18 @@ Contract version: **1**.
 ## Scope layout
 
 A scope is a folder holding a `.threads/` folder; its generated index
-`THREADS.md` sits beside `.threads/`.
+`THREADS.md` sits beside `.threads/`. The scope exists exactly when
+`.threads/` exists: a plain `mkdir .threads` creates one, and everything else
+below is created on demand.
 
 - `.threads/` holds the active threads, one file per thread: `.threads/<id>.md`.
+- `.threads/history/` is the archive of closed threads, with its generated
+  index `.threads/history/INDEX.md`.
+- `.threads/history/expired/` is the archive of retired proposed threads,
+  with its generated index `.threads/history/expired/INDEX.md`.
+- `.threads/.contract` holds the scope's contract version: the version as a
+  decimal integer followed by one LF, so `1⏎` (the two bytes `31 0A`) for
+  contract 1.
 
 ## Scope resolution
 
@@ -107,8 +116,52 @@ followed, when `leaning` is non-empty, by
 The separator in the entry is ` — ` (space, U+2014, space). With no active
 thread, the header is followed by `⏎No active threads.⏎`.
 
+### `.threads/history/INDEX.md` and `.threads/history/expired/INDEX.md`
+
+Each archive index is a header in the style of `THREADS.md`'s, followed by
+its body. For `.threads/history/INDEX.md` the header is
+
+```
+# History⏎
+⏎
+> Generated from `.threads/history/`. Do not edit by hand: edit the thread files,⏎
+> and this index is rebuilt on the next upkeep.⏎
+```
+
+and for `.threads/history/expired/INDEX.md`
+
+```
+# Expired⏎
+⏎
+> Generated from `.threads/history/expired/`. Do not edit by hand: edit the thread files,⏎
+> and this index is rebuilt on the next upkeep.⏎
+```
+
+With no thread in the archive, the header is followed by
+`⏎No closed threads.⏎` (history) or `⏎No expired threads.⏎` (expired). The
+entries of a non-empty archive are not part of the contract yet.
+
 ## Operations
 
 Every implementation must offer:
 
 - **Regenerate**: rebuild the generated files of the resolved scope.
+- **Create scope** (`init`), and **create the user scope** (`init user`),
+  run on the user's explicit request only:
+  - The project scope is created at the git root when the current directory
+    is inside a git repository (the folder holding the `.git` entry found by
+    the walk-up of § Scope resolution), at the current directory otherwise.
+    The user scope is created at the user root of § Scope resolution, which
+    is created too if missing.
+  - It writes exactly the skeleton: `.threads/`, `.threads/history/`,
+    `.threads/history/expired/`, `.threads/.contract` (current contract
+    version) and the three generated files, each in its empty form. Nothing
+    else is written, inside or outside the scope.
+  - It refuses, writing nothing and printing the covering scope's root path,
+    when a project scope already covers the current directory (as resolved
+    by § Scope resolution, main worktree included). `init user` refuses the
+    same way when the user scope already exists. An existing user scope does
+    not block creating a project scope, and a project scope does not block
+    `init user`.
+  - After creating the user scope, it tells the user once that writes to it
+    may trigger the harness's approval prompts.

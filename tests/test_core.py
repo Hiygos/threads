@@ -152,6 +152,58 @@ class ResolveScope(unittest.TestCase):
         self.assertIsNone(core.resolve_scope(wt, dict(self.env, PATH=self.mkdir("empty-bin"))))
 
 
+class CreateScope(unittest.TestCase):
+    """Edges the conformance cases leave out; the skeleton itself is covered there."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        self.env = {"HOME": os.path.join(self.root, "home")}
+
+    def tree(self, top):
+        return sorted(os.path.relpath(os.path.join(d, n), top)
+                      for d, dirs, files in os.walk(top) for n in dirs + files)
+
+    def test_skeleton_only(self):
+        work = os.path.join(self.root, "work")
+        os.mkdir(work)
+        scope = core.create_scope(work, env=self.env)
+        self.assertEqual(self.tree(work), sorted([
+            ".threads", ".threads/.contract", ".threads/history",
+            ".threads/history/INDEX.md", ".threads/history/expired",
+            ".threads/history/expired/INDEX.md", "THREADS.md"]))
+        with open(scope.contract_path, "rb") as f:
+            self.assertEqual(f.read(), b"1\n")
+        self.assertEqual(core.resolve_scope(work, self.env).root, work)
+
+    def test_refusal_writes_nothing(self):
+        work = os.path.join(self.root, "work")
+        os.makedirs(os.path.join(work, ".threads"))
+        before = self.tree(self.root)
+        with self.assertRaises(core.ScopeExists) as refused:
+            core.create_scope(work, env=self.env)
+        self.assertEqual(refused.exception.scope.root, work)
+        self.assertEqual(self.tree(self.root), before)
+        created, text = core.run_init(work, env=self.env)
+        self.assertFalse(created)
+        self.assertIn(work, text)
+
+    def test_user_scope_creates_missing_root(self):
+        users = os.path.join(self.root, "a", "b")
+        scope = core.create_scope(self.root, user=True, env=dict(self.env, THREADS_USER_ROOT=users))
+        self.assertEqual((scope.kind, scope.root), ("user", users))
+        self.assertTrue(os.path.isdir(os.path.join(users, ".threads", "history", "expired")))
+
+    def test_user_notice_only_for_user_scope(self):
+        work = os.path.join(self.root, "work")
+        os.mkdir(work)
+        _, project = core.run_init(work, env=self.env)
+        _, user = core.run_init(work, user=True, env=self.env)
+        self.assertNotIn("approval", project)
+        self.assertEqual(user.count("approval"), 1)
+
+
 class Today(unittest.TestCase):
     def test_forced_clock(self):
         os.environ["THREADS_TODAY"] = "2026-05-04"

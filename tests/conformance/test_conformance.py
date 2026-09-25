@@ -21,7 +21,10 @@ class Conformance(unittest.TestCase):
                     if case["refusal"] is None:
                         self.assertEqual(result.code, 0, result.stderr)
                     else:
-                        self.assertNotEqual(result.code, 0)
+                        if result.refusal_exits_nonzero:
+                            self.assertNotEqual(result.code, 0)
+                        else:
+                            self.assertEqual(result.code, 0, result.stderr)
                         self.assertIn(case["refusal"], (result.stdout or "") + result.stderr)
                     if result.stdout is not None:
                         self.assertEqual(result.stdout, case["stdout"])
