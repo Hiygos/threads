@@ -17,6 +17,29 @@ A scope is a folder holding a `.threads/` folder; its generated index
 
 - `.threads/` holds the active threads, one file per thread: `.threads/<id>.md`.
 
+## Scope resolution
+
+A session resolves exactly one scope, from the directory it starts in:
+
+1. **Project scope.** Check the start directory, then each parent in turn;
+   the first folder holding `.threads/` is the project scope.
+   - Inside a git repository (a folder holding a `.git` entry), the git root
+     is the last folder checked.
+   - Outside git, below the home directory (`$HOME`), the walk stops just
+     below it: the home directory itself is never checked.
+   - Outside both, only the start directory is checked.
+   - In a linked git worktree where nothing was found, the main worktree's
+     root (the parent of `git rev-parse --git-common-dir`) is checked last.
+     When git cannot answer, this step finds nothing.
+2. **User scope.** Otherwise, the user root is `$THREADS_USER_ROOT` when that
+   variable is an absolute path, and `~/.agents` otherwise (an empty or
+   relative value is ignored). If it holds `.threads/`, it is the user scope.
+3. Otherwise there is no scope: every operation is a silent no-op, writes
+   nothing and prints nothing.
+
+Scopes are never merged: a project scope found means the user scope is not
+read at all.
+
 ## Thread files
 
 - A thread file is UTF-8 text. A leading byte order mark is tolerated on read;

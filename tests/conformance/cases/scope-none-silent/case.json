@@ -1,0 +1,13 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "regen"
+  ],
+  "stdout": "",
+  "refusal": null,
+  "env": {
+    "HOME": "{sandbox}/home"
+  },
+  "cwd": "work",
+  "silent": true
+}

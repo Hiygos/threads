@@ -51,7 +51,9 @@ class PluginHooks(unittest.TestCase):
         payload = {"session_id": "s1", "hook_event_name": event, "cwd": self.work}
         if event == "SessionStart":
             payload["source"] = source
-        env = dict(os.environ, PATH=self.bin, TZ="UTC", THREADS_TODAY="2026-01-03")
+        # An isolated HOME: a real user scope on the machine is never read.
+        env = dict(os.environ, PATH=self.bin, HOME=os.path.join(self.tmp.name, "home"),
+                   TZ="UTC", THREADS_TODAY="2026-01-03")
         env.pop("THREADS_USER_ROOT", None)
         proc = subprocess.run(
             ["/bin/sh", os.path.join(self.plugin, "scripts", "guard.sh"), event],
@@ -67,7 +69,7 @@ class PluginHooks(unittest.TestCase):
         return output["additionalContext"]
 
     def listing(self):
-        return core.render_index(core.scan_active(core.resolve_scope(self.work)))
+        return core.render_index(core.scan_active(core.resolve_scope(self.work, {"HOME": os.path.join(self.tmp.name, "home")})))
 
     def tree(self, root):
         return sorted(os.path.relpath(os.path.join(d, n), root)

@@ -21,8 +21,8 @@ here), so it must work on its own, with nothing from the rest of the repo.
 
 - No state under the plugin root: it is a versioned cache copy replaced on
   update. The guard runs Python with `-B` for the same reason.
-- The scope is resolved from the hook input's `cwd`; every hook is silent when
-  none exists.
+- The scope is resolved by the core from the hook input's `cwd`
+  (`CONTRACT.md` § Scope resolution); every hook is silent when none exists.
 - `guard.sh` uses shell builtins only (it must run with a bare `PATH`).
 - Hooks so far: SessionStart (every source) regenerates the generated files
   and injects the thread listing as `additionalContext`.

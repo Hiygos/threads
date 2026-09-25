@@ -1,5 +1,7 @@
 """Unit tests of the core, through its public interface."""
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -41,7 +43,7 @@ class Regenerate(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = self.tmp.name
         os.mkdir(os.path.join(self.root, ".threads"))
-        self.scope = core.resolve_scope(self.root)
+        self.scope = core.resolve_scope(self.root, {"HOME": os.path.join(self.root, "no-home")})
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -56,7 +58,8 @@ class Regenerate(unittest.TestCase):
 
     def test_inactive_without_threads_dir(self):
         with tempfile.TemporaryDirectory() as other:
-            self.assertIsNone(core.resolve_scope(other))
+            env = {"HOME": os.path.join(other, "home")}
+            self.assertIsNone(core.resolve_scope(other, env))
 
     def test_missing_required_field_not_listed(self):
         fields = dict(VALID)
@@ -87,6 +90,66 @@ class Regenerate(unittest.TestCase):
         self.assertNotIn(b"\r", data)
         self.assertIn("Perché?".encode("utf-8"), data)
         self.assertTrue(data.endswith(b"\n") and not data.endswith(b"\n\n"))
+
+
+GIT = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+       "-c", "commit.gpgsign=false"]
+
+
+class ResolveScope(unittest.TestCase):
+    """Edges the conformance cases leave out; the rule itself is covered there."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        self.home = self.mkdir("home")
+        self.env = {"HOME": self.home, "PATH": os.environ.get("PATH", "")}
+
+    def mkdir(self, *parts):
+        path = os.path.join(self.root, *parts)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def git(self, cwd, *args):
+        subprocess.run(GIT + list(args), cwd=cwd, env=dict(self.env, GIT_CONFIG_NOSYSTEM="1"),
+                       check=True, capture_output=True)
+
+    def worktree(self):
+        main = self.mkdir("main")
+        self.git(main, "init", "-q")
+        self.git(main, "commit", "-q", "--allow-empty", "-m", "x")
+        wt = os.path.join(self.root, "wt")
+        self.git(main, "worktree", "add", "-q", "--detach", wt)
+        self.mkdir("main", ".threads")
+        return wt
+
+    def test_home_itself_never_checked(self):
+        self.mkdir("home", ".threads")
+        self.assertIsNone(core.resolve_scope(self.home, self.env))
+
+    def test_scope_kinds(self):
+        self.mkdir("home", ".agents", ".threads")
+        self.mkdir("home", "p", ".threads")
+        self.assertEqual(core.resolve_scope(self.mkdir("home", "q"), self.env).kind, "user")
+        self.assertEqual(core.resolve_scope(self.mkdir("home", "p"), self.env).kind, "project")
+
+    def test_moved_user_root_without_threads_is_inactive(self):
+        self.mkdir("home", ".agents", ".threads")
+        env = dict(self.env, THREADS_USER_ROOT=self.mkdir("moved"))
+        self.assertIsNone(core.resolve_scope(self.mkdir("work"), env))
+
+    @unittest.skipIf(shutil.which("git") is None, "git not found")
+    def test_worktree_own_threads_wins(self):
+        wt = self.worktree()
+        os.mkdir(os.path.join(wt, ".threads"))
+        self.assertEqual(core.resolve_scope(wt, self.env).root, wt)
+
+    @unittest.skipIf(shutil.which("git") is None, "git not found")
+    def test_worktree_without_git_binary(self):
+        wt = self.worktree()
+        self.assertEqual(core.resolve_scope(wt, self.env).root, os.path.join(self.root, "main"))
+        self.assertIsNone(core.resolve_scope(wt, dict(self.env, PATH=self.mkdir("empty-bin"))))
 
 
 class Today(unittest.TestCase):

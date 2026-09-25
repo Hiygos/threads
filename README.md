@@ -53,9 +53,10 @@ Resolution rule, applied at every session:
 1. Starting from the directory the session starts in, look for a `.threads/`
    there and in each parent. Stop at the git root (checked) or, outside a git
    repository, just below the home directory (the home itself is not
-   checked). Outside both, only the start directory is checked. The first
-   `.threads/` found is the project scope, and the user scope is **not read
-   at all**. The two scopes are never merged.
+   checked). Outside both, only the start directory is checked. In a linked
+   git worktree with no `.threads/` found, the main worktree's root is
+   checked too. The first `.threads/` found is the project scope, and the
+   user scope is **not read at all**. The two scopes are never merged.
 2. Otherwise, if the user-scope `.threads/` exists, the user scope is used.
 3. Otherwise threads stay inactive.
 

@@ -14,8 +14,8 @@ own, with nothing from the rest of the repo.
 
 ## Local Contracts
 
-- The script resolves the scope from the current directory and is silent when
-  none exists.
+- The script has the core resolve the scope from the current directory
+  (`CONTRACT.md` § Scope resolution) and is silent when none exists.
 - Subcommands so far: `regen`.
 
 ## Verification

@@ -7,12 +7,15 @@ here. Do not edit a packaged copy: edit this file and copy it over.
 """
 import os
 import re
+import subprocess
 from datetime import date
 
 CONTRACT_VERSION = 1
 
 THREADS_DIR = ".threads"
 INDEX_FILE = "THREADS.md"
+USER_ROOT_ENV = "THREADS_USER_ROOT"
+DEFAULT_USER_ROOT = ".agents"  # relative to the home directory
 
 ACTIVE_STATES = ("proposed", "open", "deferred")
 REQUIRED_FIELDS = ("id", "status", "opened", "touched", "question")
@@ -35,10 +38,14 @@ _KEY_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
 class Scope:
-    """A resolved scope: the folder holding `.threads/` and `THREADS.md`."""
+    """A resolved scope: the folder holding `.threads/` and `THREADS.md`.
 
-    def __init__(self, root):
+    `kind` is "project" or "user".
+    """
+
+    def __init__(self, root, kind="project"):
         self.root = os.path.abspath(root)
+        self.kind = kind
 
     @property
     def threads_dir(self):
@@ -79,10 +86,92 @@ def today():
     return date.today()
 
 
-def resolve_scope(start):
-    """The scope for a session started in `start`, or None when inactive."""
-    if os.path.isdir(os.path.join(start, THREADS_DIR)):
-        return Scope(start)
+def _has_threads(folder):
+    return os.path.isdir(os.path.join(folder, THREADS_DIR))
+
+
+def _project_candidates(start, home):
+    """Folders checked for `.threads/`, nearest first, and the git root or None.
+
+    Up to the git root (checked, and the last one); outside git, up to just
+    below `home` (never checked); outside both, the start directory only.
+    """
+    folders = []
+    folder = start
+    while True:
+        folders.append(folder)
+        if os.path.exists(os.path.join(folder, ".git")):
+            return folders, folder
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            break
+        folder = parent
+    # Outside git: below home, every folder up to just below it; otherwise
+    # the start directory only. Home itself is never checked.
+    prefix = home.rstrip(os.sep) + os.sep if home else None
+    if prefix and start.startswith(prefix):
+        return [f for f in folders if f.startswith(prefix)], None
+    return ([] if start == home else [start]), None
+
+
+def _main_worktree_root(git_root, env):
+    """The main worktree's root when `git_root` is a linked worktree, else None.
+
+    Asks git for the common dir; any failure (git absent, not a repo, bare
+    main repository) means no main worktree to continue to.
+    """
+    if not os.path.isfile(os.path.join(git_root, ".git")):
+        return None  # A `.git` folder: this is a main worktree.
+    env = {k: v for k, v in env.items()
+           if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE")}
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--git-dir", "--git-common-dir"],
+            cwd=git_root, env=env, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = proc.stdout.decode("utf-8", "replace").splitlines()
+    if proc.returncode != 0 or len(lines) != 2:
+        return None
+    git_dir, common_dir = (os.path.realpath(os.path.join(git_root, p)) for p in lines)
+    if git_dir == common_dir or os.path.basename(common_dir) != ".git":
+        return None
+    return os.path.dirname(common_dir)
+
+
+def _user_root(env):
+    """The user scope's root: `$THREADS_USER_ROOT` when absolute, else `~/.agents`."""
+    moved = env.get(USER_ROOT_ENV, "")
+    if moved and os.path.isabs(moved):
+        return moved
+    home = env.get("HOME") or os.path.expanduser("~")
+    return os.path.join(home, DEFAULT_USER_ROOT)
+
+
+def resolve_scope(start, env=None):
+    """The scope for a session started in `start`, or None when inactive.
+
+    The nearest project scope (walk-up, then the main worktree's root for a
+    linked worktree), else the user scope, else None. Never both. `env`
+    (default `os.environ`) supplies HOME and THREADS_USER_ROOT.
+    """
+    env = os.environ if env is None else env
+    start = os.path.realpath(start)
+    home = env.get("HOME") or os.path.expanduser("~")
+    home = os.path.realpath(home) if os.path.isabs(home) else None
+    folders, git_root = _project_candidates(start, home)
+    for folder in folders:
+        if _has_threads(folder):
+            return Scope(folder)
+    if git_root is not None:
+        main = _main_worktree_root(git_root, env)
+        if main is not None and _has_threads(main):
+            return Scope(main)
+    root = _user_root(env)
+    if _has_threads(root):
+        return Scope(root, kind="user")
     return None
 
 

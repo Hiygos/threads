@@ -13,7 +13,11 @@ class Conformance(unittest.TestCase):
         for name in names:
             for adapter in [harness.REFERENCE] + sorted(set(harness.ADAPTERS) - {harness.REFERENCE}):
                 with self.subTest(case=name, adapter=adapter):
+                    if harness.needs_git(harness.load_case(name)) and not harness.git_available():
+                        self.skipTest("git not found")
                     case, result, actual, expected = harness.run_case(name, adapter)
+                    if case.get("silent"):
+                        self.assertEqual((result.raw, result.stderr), ("", ""), "not silent")
                     if case["refusal"] is None:
                         self.assertEqual(result.code, 0, result.stderr)
                     else:

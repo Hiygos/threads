@@ -13,7 +13,10 @@ runs every case against every implementation.
   hook I/O.
 - `conformance/` — the harness (`harness.py`) and one folder per case under
   `conformance/cases/` (`before/`, `after/`, `case.json`; format in the
-  harness docstring, with how each operation maps to a plugin hook).
+  harness docstring, with how each operation maps to a plugin hook). A
+  case's fixtures are a sandbox; optional `case.json` keys set the start
+  directory (`cwd`), git repos (`git`), linked worktrees (`worktrees`),
+  environment (`env`, `{sandbox}` expanded) and a silence check (`silent`).
 
 ## Local Contracts
 
@@ -22,6 +25,9 @@ runs every case against every implementation.
 - Tests check external behaviour (files on disk, stdout, exit codes), never
   internal shapes or instruction wording.
 - Fixtures are synthetic and English; dates come from `THREADS_TODAY`.
+- Every test that runs an adapter or resolves a scope sets `HOME` to a
+  temporary folder, so a real user scope on the machine is never read or
+  written. Tests needing the `git` binary are skipped without it.
 - Goldens change only through `python3 -m tests.conformance --update`, and the
   resulting diff is reviewed before committing. Empty fixture folders carry a
   `.gitkeep`, which the comparison ignores.

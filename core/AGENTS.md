@@ -12,7 +12,9 @@ both implementations.
 
 ## Local Contracts
 
-- Python ≥3.9, standard library only.
+- Python ≥3.9, standard library only. The one external program is `git`,
+  optional: scope resolution asks it for a linked worktree's main worktree
+  and finds nothing there when it is missing or fails.
 - **Packaged copies are never edited.** After changing `threads_core.py`, copy
   it over each packaged location: `skill/scripts/threads_core.py`,
   `plugin/scripts/threads_core.py`. A new
