@@ -234,4 +234,9 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    # UTF-8 with LF on every platform: on Windows Python defaults to the ANSI
+    # code page and CRLF, which would break the output and the hook JSON.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", newline="\n")
     sys.exit(main(sys.argv[1:]))

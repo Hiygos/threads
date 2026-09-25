@@ -18,9 +18,12 @@ PLUGIN = os.path.join(REPO, "plugin")
 INACTIVE = "threads is inactive: Python ≥3.9 not found"
 TODAY = "2026-01-03"
 SOURCES = ("startup", "resume", "compact", "clear")
+# The `sh` that runs the guard: `/bin/sh`, or Git Bash's `sh.exe` on Windows.
+SH = shutil.which("sh") if os.name == "nt" else "/bin/sh"
 THREAD = "---\nid: sample\nstatus: open\nopened: 2026-01-01\ntouched: 2026-01-02\nquestion: Which cache?\n---\n"
 
 
+@unittest.skipIf(SH is None, "no sh: native Windows without Git Bash is unsupported")
 class PluginHooks(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -38,12 +41,13 @@ class PluginHooks(unittest.TestCase):
 
     def fake(self, name, body):
         path = os.path.join(self.bin, name)
-        with open(path, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write("#!/bin/sh\n" + body + "\n")
         os.chmod(path, 0o755)
 
     def real(self, name):
-        self.fake(name, 'exec "%s" "$@"' % sys.executable)
+        # Forward slashes: Git Bash reads a Windows path that way too.
+        self.fake(name, 'exec "%s" "$@"' % sys.executable.replace(os.sep, "/"))
 
     def too_old(self, name):
         # Fails the version check like an interpreter older than 3.9 would.
@@ -51,7 +55,7 @@ class PluginHooks(unittest.TestCase):
 
     def add_scope(self):
         os.mkdir(os.path.join(self.work, ".threads"))
-        with open(os.path.join(self.work, ".threads", "sample.md"), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.work, ".threads", "sample.md"), "w", encoding="utf-8", newline="\n") as f:
             f.write(THREAD)
 
     def hook(self, event="SessionStart", source="startup", session="s1", data=True, **extra):
@@ -68,7 +72,7 @@ class PluginHooks(unittest.TestCase):
         if data:
             env["CLAUDE_PLUGIN_DATA"] = self.data
         proc = subprocess.run(
-            ["/bin/sh", os.path.join(self.plugin, "scripts", "guard.sh"), event],
+            [SH, os.path.join(self.plugin, "scripts", "guard.sh"), event],
             input=json.dumps(payload).encode("utf-8"),
             cwd=self.work, env=env, capture_output=True,
         )
@@ -80,7 +84,7 @@ class PluginHooks(unittest.TestCase):
         env = dict(os.environ, PATH=self.bin, HOME=os.path.join(self.tmp.name, "home"))
         env.pop("THREADS_USER_ROOT", None)
         proc = subprocess.run(
-            ["/bin/sh", os.path.join(self.plugin, "scripts", "guard.sh"), "init"] + list(args),
+            [SH, os.path.join(self.plugin, "scripts", "guard.sh"), "init"] + list(args),
             cwd=self.work, env=env, capture_output=True, stdin=subprocess.DEVNULL,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -119,7 +123,7 @@ class PluginHooks(unittest.TestCase):
         return self.briefing().listing
 
     def write(self, name, text):
-        with open(os.path.join(self.work, ".threads", name), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.work, ".threads", name), "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
 
     def tree(self, root):
@@ -157,7 +161,7 @@ class PluginHooks(unittest.TestCase):
     def test_retirement_notices_first_with_a_working_ack_command(self):
         self.real("python3")
         self.add_scope()
-        with open(os.path.join(self.work, ".threads", "old-idea.md"), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.work, ".threads", "old-idea.md"), "w", encoding="utf-8", newline="\n") as f:
             f.write("---\nid: old-idea\nstatus: proposed\nopened: 2025-12-01\n"
                     "touched: 2025-12-01\nquestion: Which log level?\n---\n")
         context = self.context(self.hook())
@@ -166,10 +170,12 @@ class PluginHooks(unittest.TestCase):
         commands = [line.split("`")[1] for line in context.splitlines()
                     if line.strip().startswith("ack: `")]
         self.assertEqual(len(commands), 1)
-        env = dict(os.environ, PATH=self.bin + os.pathsep + "/usr/bin:/bin",
+        # The command runs `sh` itself: on Windows, Git Bash's own PATH has it.
+        system = os.environ.get("PATH", "") if os.name == "nt" else "/usr/bin:/bin"
+        env = dict(os.environ, PATH=self.bin + os.pathsep + system,
                    HOME=os.path.join(self.tmp.name, "home"))
         env.pop("THREADS_USER_ROOT", None)
-        proc = subprocess.run(["/bin/sh", "-c", commands[0]], cwd=self.tmp.name, env=env,
+        proc = subprocess.run([SH, "-c", commands[0]], cwd=self.tmp.name, env=env,
                               capture_output=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(b"old-idea", proc.stdout)
@@ -235,7 +241,7 @@ class PluginHooks(unittest.TestCase):
     def test_ack_python_missing(self):
         env = dict(os.environ, PATH=self.bin, HOME=os.path.join(self.tmp.name, "home"))
         proc = subprocess.run(
-            ["/bin/sh", os.path.join(self.plugin, "scripts", "guard.sh"), "ack", "all"],
+            [SH, os.path.join(self.plugin, "scripts", "guard.sh"), "ack", "all"],
             cwd=self.work, env=env, capture_output=True, stdin=subprocess.DEVNULL)
         self.assertEqual((proc.returncode, proc.stdout.decode("utf-8")), (0, INACTIVE + "\n"))
 
@@ -279,7 +285,7 @@ class PluginHooks(unittest.TestCase):
         self.assertIn("uses contract %d; update threads" % (core.CONTRACT_VERSION + 1), context)
         env = dict(os.environ, PATH=self.bin, HOME=os.path.join(self.tmp.name, "home"))
         env.pop("THREADS_USER_ROOT", None)
-        proc = subprocess.run(["/bin/sh", os.path.join(self.plugin, "scripts", "guard.sh"),
+        proc = subprocess.run([SH, os.path.join(self.plugin, "scripts", "guard.sh"),
                                "ack", "all"], cwd=self.work, env=env, capture_output=True)
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual(state(), before)
@@ -287,7 +293,7 @@ class PluginHooks(unittest.TestCase):
     def edit(self, thread_id, note="More thinking."):
         """Append a dated note, leaving `touched` as it was: the thread now hangs."""
         with open(os.path.join(self.work, ".threads", thread_id + ".md"), "a",
-                  encoding="utf-8") as f:
+                  encoding="utf-8", newline="\n") as f:
             f.write("\n## %s\n\n%s\n" % (TODAY, note))
 
     def blocked(self, out):
@@ -394,7 +400,7 @@ class PluginHooks(unittest.TestCase):
         index = os.path.join(self.work, "THREADS.md")
         for extra in ({}, {"stop_hook_active": True}, {"session": None}):
             with self.subTest(extra=extra):
-                with open(index, "w", encoding="utf-8") as f:
+                with open(index, "w", encoding="utf-8", newline="\n") as f:
                     f.write("edited by hand\n")
                 self.write("added.md", THREAD.replace("sample", "added"))
                 self.hook("Stop", **extra)
@@ -558,7 +564,7 @@ class PluginHooks(unittest.TestCase):
         os.makedirs(self.data)
         stamp = time.time() - (hook.STASH_MAX_AGE_DAYS + 1) * 86400
         for name in ("old", "s1", ".old.tmp-12", "recent", "unrelated.txt"):
-            with open(os.path.join(self.data, name), "w", encoding="utf-8") as f:
+            with open(os.path.join(self.data, name), "w", encoding="utf-8", newline="\n") as f:
                 f.write("{}\n")
             if name != "recent":
                 os.utime(os.path.join(self.data, name), (stamp, stamp))

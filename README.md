@@ -73,6 +73,11 @@ for approval on those writes (Claude Code outside its working directory,
 Codex in its default sandbox); allow the folder once in the harness's
 settings to avoid it.
 
+## Platforms
+
+macOS and Linux; on Windows, under Git Bash only (native Windows without Git
+Bash is unsupported). Python ≥3.9 on `PATH`.
+
 ## Origin
 
 Extracted from a working setup used daily in a personal workspace, where

@@ -33,13 +33,16 @@ contract.
 ## Verification
 
 - `python3 -m unittest` from the repo root: core, packaging and conformance.
-  CI runs it on Ubuntu and macOS × Python 3.9 and latest.
+  CI runs it on Ubuntu and macOS × Python 3.9 and latest, and on Windows
+  under Git Bash with the latest Python (native Windows without Git Bash is
+  unsupported). A `vX.Y.Z` tag releases through `scripts/` (see there).
 
 ## Child DOX Index
 
 - [`core/`](core/AGENTS.md) — the single source of the shared core; packaged copies are never edited.
 - [`docs/`](docs/AGENTS.md) — agent-facing config (`docs/agents/`) and ADRs (`docs/adr/`, created lazily).
 - [`plugin/`](plugin/AGENTS.md) — the Claude Code plugin, as installed (the marketplace entry points here); hooks run through an `sh` guard.
+- [`scripts/`](scripts/AGENTS.md) — maintainer tooling: version agreement and the skill zip, run by the release workflow.
 - [`skill/`](skill/AGENTS.md) — the skill for any harness, as installed: `SKILL.md`, its references and the `threads` script.
 - [`tests/`](tests/AGENTS.md) — unit, packaging and conformance tests; goldens change only with `--update`.
 

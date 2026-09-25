@@ -8,7 +8,8 @@ here), so it must work on its own, with nothing from the rest of the repo.
 
 ## Ownership
 
-- `.claude-plugin/plugin.json` — the plugin manifest.
+- `.claude-plugin/plugin.json` — the plugin manifest; its `version` is the
+  product semver, always equal to `skill/VERSION` (`scripts/AGENTS.md`).
 - `hooks/hooks.json` — hook declarations (SessionStart, UserPromptSubmit,
   Stop); every command
   runs through the guard.
@@ -39,7 +40,11 @@ here), so it must work on its own, with nothing from the rest of the repo.
   update. The guard runs Python with `-B` for the same reason.
 - The scope is resolved by the core from the hook input's `cwd`
   (`CONTRACT.md` § Scope resolution); every hook is silent when none exists.
-- `guard.sh` uses shell builtins only (it must run with a bare `PATH`).
+- `guard.sh` uses shell builtins only (it must run with a bare `PATH`), and
+  finds its folder by splitting `$0` at the last `/` or `\`, so a Windows
+  path works under Git Bash.
+- The adapters write UTF-8 with LF (and `hook.py` reads its stdin as UTF-8)
+  on every platform.
 - Hooks so far: SessionStart (every source) runs the core's upkeep and
   injects as `additionalContext` the briefing (`CONTRACT.md` § Briefing):
   the core's urgent sections, then the always-on rules (`RULES` in

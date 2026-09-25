@@ -7,8 +7,12 @@
 # init and ack print it as plain text, and every other hook exits 0 silently. Shell builtins only: PATH may be bare.
 # `-B`: no bytecode cache, so nothing is written under the plugin root.
 
-dir=${0%/*}
-[ "$dir" = "$0" ] && dir=.
+# The folder of this script, split at its last `/` or `\` (a Windows path
+# under Git Bash may use either).
+case $0 in
+  *[/\\]*) dir=${0%[/\\]*} ;;
+  *) dir=. ;;
+esac
 
 for py in python3 python; do
   if command -v "$py" >/dev/null 2>&1 &&

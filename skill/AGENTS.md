@@ -4,7 +4,8 @@
 
 The skill: the implementation of the contract for any harness. This folder is
 the skill as installed (`~/.agents/skills/threads/`), so it must work on its
-own, with nothing from the rest of the repo.
+own, with nothing from the rest of the repo. The release zip is this folder
+minus `AGENTS.md`/`CLAUDE.md`, dotfiles and `__pycache__`.
 
 ## Ownership
 
@@ -12,6 +13,8 @@ own, with nothing from the rest of the repo.
   `description`, `license`, `compatibility` only): the full agent-facing
   contract and procedures for a harness without hooks, setup, and the
   "What this skill cannot guarantee" section. Instructions, not contract.
+- `VERSION` — the product semver and one LF; always equal to the plugin
+  manifest's `version` (`scripts/AGENTS.md`).
 - `references/` — loaded on demand from `SKILL.md`: `merge.md`, `reopen.md`,
   `migrate.md` (adapted from the plugin's, never copied blindly),
   `harnesses.md` (install link and always-loaded instructions file per

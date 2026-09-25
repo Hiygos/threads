@@ -72,6 +72,7 @@ replaced by `{threads}`, so both compare with one golden.
 """
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -82,6 +83,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 CASES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cases")
 SKILL_SCRIPT = os.path.join(REPO, "skill", "scripts", "threads")
 PLUGIN_GUARD = os.path.join(REPO, "plugin", "scripts", "guard.sh")
+# The `sh` that runs the guard (Git Bash's `sh.exe` on Windows).
+SH = shutil.which("sh") or "sh"
 
 # Skill operation -> plugin entry point (see the module docstring).
 PLUGIN_ENTRIES = {
@@ -122,9 +125,24 @@ class Result:
             if text is None:
                 return None
             for path, placeholder in paths:
+                if os.sep != "/":
+                    text = native_paths(text, path, placeholder)
                 text = text.replace(path, placeholder)
             return text
         self.stdout, self.stderr, self.raw = sub(self.stdout), sub(self.stderr), sub(self.raw)
+
+
+def native_paths(text, path, placeholder):
+    """Windows: write each path under `path` as a golden does (`/`, unquoted).
+
+    `shlex.quote` quotes a path holding a backslash or a colon, which a POSIX
+    path never needs here, so the quotes go too.
+    """
+    def posix(match):
+        return placeholder + match.group(1).replace(os.sep, "/")
+
+    text = re.sub("'" + re.escape(path) + r"([^'\s]*)'", posix, text)
+    return re.sub(re.escape(path) + r"([^'\s`\"]*)", posix, text)
 
 
 def base_env(case, sandbox, home):
@@ -175,7 +193,7 @@ def run_plugin(start, env, case, operation=None):
     entry = PLUGIN_ENTRIES[operation[0]]
     if entry[0] in ("skill", "command"):
         proc = subprocess.run(
-            ["sh", PLUGIN_GUARD, entry[1]] + operation[1:],
+            [SH, PLUGIN_GUARD, entry[1]] + operation[1:],
             cwd=start, env=env, capture_output=True, stdin=subprocess.DEVNULL,
         )
         out = proc.stdout.decode("utf-8")
@@ -186,7 +204,7 @@ def run_plugin(start, env, case, operation=None):
     if event == "SessionStart":
         payload["source"] = "startup"
     proc = subprocess.run(
-        ["sh", PLUGIN_GUARD, event], input=json.dumps(payload).encode("utf-8"),
+        [SH, PLUGIN_GUARD, event], input=json.dumps(payload).encode("utf-8"),
         cwd=start, env=env, capture_output=True,
     )
     out = proc.stdout.decode("utf-8")

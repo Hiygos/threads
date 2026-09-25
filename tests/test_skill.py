@@ -19,6 +19,16 @@ TODAY = "2026-01-03"
 THREAD = "---\nid: %s\nstatus: %s\nopened: 2026-01-01\ntouched: %s\nquestion: Which %s?\n---\n"
 
 
+def can_symlink():
+    """Whether this machine lets the tests create a symlink (Windows may not)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            os.symlink("target", os.path.join(tmp, "link"))
+        except (AttributeError, NotImplementedError, OSError):
+            return False
+    return True
+
+
 class SkillCheck(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -30,12 +40,12 @@ class SkillCheck(unittest.TestCase):
 
     def write(self, thread_id, status="open", touched="2026-01-02"):
         with open(os.path.join(self.work, ".threads", thread_id + ".md"), "w",
-                  encoding="utf-8") as f:
+                  encoding="utf-8", newline="\n") as f:
             f.write(THREAD % (thread_id, status, touched, thread_id))
 
     def edit(self, thread_id):
         with open(os.path.join(self.work, ".threads", thread_id + ".md"), "a",
-                  encoding="utf-8") as f:
+                  encoding="utf-8", newline="\n") as f:
             f.write("\n## %s\n\nMore thinking.\n" % TODAY)
 
     def run_script(self, *args, code=0):
@@ -76,7 +86,7 @@ class SkillCheck(unittest.TestCase):
         self.assertIn("threads start", self.run_script("check", code=1))
 
     def test_check_in_a_read_only_scope(self):
-        with open(os.path.join(self.work, ".threads", ".contract"), "w") as f:
+        with open(os.path.join(self.work, ".threads", ".contract"), "w", newline="\n") as f:
             f.write("99\n")
         self.run_script("start")
         self.assertFalse(os.path.exists(os.path.join(self.work, ".threads", ".state")))
@@ -178,7 +188,7 @@ class SkillSetup(unittest.TestCase):
         self.assertIn("Not written", self.script("snippet", path, code=1))
         self.assertEqual(self.read(path), "%s\nHalf a block.\n" % BEGIN)
 
-    @unittest.skipUnless(hasattr(os, "symlink"), "no symlinks")
+    @unittest.skipUnless(can_symlink(), "cannot create symlinks here")
     def test_symlink_target_is_written(self):
         target = os.path.join(self.work, "AGENTS.md")
         self.write(target, "Rules.\n")
@@ -234,7 +244,7 @@ class SkillFiles(unittest.TestCase):
                             ignore=shutil.ignore_patterns("__pycache__"))
             work = os.path.join(tmp, "work")
             os.makedirs(os.path.join(work, ".threads", "history", "expired"))
-            with open(os.path.join(work, ".threads", "old.md"), "w", encoding="utf-8") as f:
+            with open(os.path.join(work, ".threads", "old.md"), "w", encoding="utf-8", newline="\n") as f:
                 f.write(THREAD.replace("2026-01-01", "2025-12-01")
                         % ("old", "proposed", "2025-12-01", "old"))
             script = os.path.join(copy, "scripts", "threads")

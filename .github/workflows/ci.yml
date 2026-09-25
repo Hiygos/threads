@@ -11,7 +11,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         python: ["3.9", "3.x"]
+        include:
+          # Windows is supported under Git Bash only: `shell: bash` is Git Bash there.
+          - os: windows-latest
+            python: "3.x"
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

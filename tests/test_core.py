@@ -79,7 +79,7 @@ class Regenerate(unittest.TestCase):
         self.tmp.cleanup()
 
     def put(self, name, text):
-        with open(os.path.join(self.root, ".threads", name), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.root, ".threads", name), "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
 
     def index(self):
@@ -126,6 +126,7 @@ class Regenerate(unittest.TestCase):
         self.assertEqual([t.id for t in core.scan(self.scope).active], ["a"])
 
     @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root reads anything")
+    @unittest.skipIf(os.name == "nt", "chmod cannot make a file unreadable on Windows")
     def test_unreadable_file(self):
         self.put("a.md", thread_text(**VALID))
         path = os.path.join(self.root, ".threads", "a.md")
@@ -225,6 +226,7 @@ class ResolveScope(unittest.TestCase):
         self.assertEqual(core.resolve_scope(wt, self.env).root, wt)
 
     @unittest.skipIf(shutil.which("git") is None, "git not found")
+    @unittest.skipIf(os.name == "nt", "Windows finds git on the parent's PATH: it cannot be hidden")
     def test_worktree_without_git_binary(self):
         wt = self.worktree()
         self.assertEqual(core.resolve_scope(wt, self.env).root, os.path.join(self.root, "main"))
@@ -407,7 +409,7 @@ class Briefing(unittest.TestCase):
     def test_leaning_cut_only_when_asked(self):
         with tempfile.TemporaryDirectory() as tmp:
             os.mkdir(os.path.join(tmp, ".threads"))
-            with open(os.path.join(tmp, ".threads", "a.md"), "w", encoding="utf-8") as f:
+            with open(os.path.join(tmp, ".threads", "a.md"), "w", encoding="utf-8", newline="\n") as f:
                 f.write(thread_text(**dict(VALID, leaning="abcdefghij")))
             scope = core.resolve_scope(tmp, {"HOME": os.path.join(tmp, "no-home")})
             result = core.scan(scope)
@@ -479,12 +481,12 @@ class Hanging(unittest.TestCase):
         fields = dict(VALID, id=thread_id)
         fields.update(extra)
         with open(os.path.join(self.root, ".threads", thread_id + ".md"), "w",
-                  encoding="utf-8") as f:
+                  encoding="utf-8", newline="\n") as f:
             f.write(thread_text(**fields))
 
     def edit(self, thread_id):
         with open(os.path.join(self.root, ".threads", thread_id + ".md"), "a",
-                  encoding="utf-8") as f:
+                  encoding="utf-8", newline="\n") as f:
             f.write("\n## 2026-01-03\n\nNote.\n")
 
     def ids(self, snapshot):
@@ -510,7 +512,7 @@ class Hanging(unittest.TestCase):
         self.put("a")
         snap = core.take_snapshot(self.scope)
         self.assertEqual(self.ids(snap), [])
-        with open(os.path.join(self.root, ".threads", "broken.md"), "w") as f:
+        with open(os.path.join(self.root, ".threads", "broken.md"), "w", newline="\n") as f:
             f.write("no frontmatter\n")
         self.assertEqual(self.ids(snap), [])
 
@@ -530,7 +532,7 @@ class Hanging(unittest.TestCase):
         self.assertEqual(os.listdir(os.path.dirname(path)), ["snap.json"])
         self.edit("a")
         self.assertEqual(self.ids(core.read_state(path)["snapshot"]), ["a"])
-        with open(path, "w") as f:
+        with open(path, "w", newline="\n") as f:
             f.write("not json")
         self.assertIsNone(core.read_state(path))
 

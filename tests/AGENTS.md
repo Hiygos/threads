@@ -8,7 +8,11 @@ runs every case against every implementation.
 ## Ownership
 
 - `test_core.py` — core unit tests, through the core's public interface.
-- `test_packaging.py` — packaged core copies identical to the source.
+- `test_packaging.py` — packaged core copies identical to the source; the
+  plugin manifest's version equal to `skill/VERSION`; `scripts/release.py
+  check` failing on any disagreement or malformed version; the built zip's
+  entries and modes, and the zip unpacked into a temp `skills/threads/` and
+  run (`start`) as a skill.
 - `test_plugin.py` — the plugin's `sh` guard (fake interpreters on `PATH`) and
   hook I/O, including the briefing's order, the context cap, the Stop gate
   (hanging threads, once per thread, `stop_hook_active`, snapshot kept or
@@ -49,6 +53,11 @@ runs every case against every implementation.
 - Tests check external behaviour (files on disk, stdout, exit codes), never
   internal shapes or instruction wording.
 - Fixtures are synthetic and English; dates come from `THREADS_TODAY`.
+- The suite runs on Windows under Git Bash: text files are written with
+  `newline="\n"`, `sh` is found on `PATH` there (`/bin/sh` elsewhere),
+  conformance output has native paths rewritten as the POSIX goldens, and a
+  test that cannot hold there (chmod-unreadable files, hiding `git` through
+  `PATH`, symlinks without the privilege) is skipped with its reason.
 - Every test that runs an adapter or resolves a scope sets `HOME` to a
   temporary folder, so a real user scope on the machine is never read or
   written. Tests needing the `git` binary are skipped without it.
