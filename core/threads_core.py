@@ -5,6 +5,7 @@ hooks, the skill's `threads` script) stay thin and call the public functions
 below; everything that must be byte-identical across implementations lives
 here. Do not edit a packaged copy: edit this file and copy it over.
 """
+import json
 import os
 import re
 import subprocess
@@ -872,6 +873,66 @@ def is_stale(thread, now=None):
     if touched is None:
         return True
     return ((now or today()) - touched).days > limit
+
+
+def take_snapshot(scope):
+    """The state of `.threads/` to compare a later scan with: {name: [mtime_ns, size]}.
+
+    Every thread file of `.threads/` is recorded by file name, anomalies
+    included, so a file fixed after the snapshot counts as modified.
+    """
+    out = {}
+    for name in _thread_files(scope.threads_dir, archive=False):
+        try:
+            st = os.stat(os.path.join(scope.threads_dir, name))
+        except OSError:
+            continue
+        out[name] = [st.st_mtime_ns, st.st_size]
+    return out
+
+
+def write_state(path, data):
+    """Write implementation-private state `data` as JSON at `path`, atomically.
+
+    Creates the missing folders. Callers check `contract_warning` first: a
+    read-only scope gets no private state either.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    write_atomic(path, json.dumps(data, sort_keys=True) + "\n")
+
+
+def read_state(path):
+    """The JSON object written by write_state at `path`, or None when missing or unreadable."""
+    try:
+        with open(path, "rb") as f:
+            data = json.loads(f.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def hanging(scope, snapshot, result=None):
+    """The threads of `.threads/` left hanging since `snapshot` (from take_snapshot).
+
+    A thread hangs when its file was modified since the snapshot (a file
+    absent from it counts as modified), it is still `open` or `proposed`,
+    and its `touched` is not today. Anomalies never hang. `result` is the
+    scan to read (default: a fresh one). Sorted by id.
+    """
+    result = scan(scope) if result is None else result
+    now = today().isoformat()
+    current = take_snapshot(scope)
+    return [t for t in result.active
+            if t.status in ("open", "proposed")
+            and t.fields.get("touched") != now
+            and os.path.basename(t.path) in current
+            and current[os.path.basename(t.path)] != snapshot.get(os.path.basename(t.path))]
+
+
+def render_hanging(threads):
+    """One line per hanging thread: `` - `<id>` (<status>, touched <touched>) — <question> ``."""
+    return "".join("- `%s` (%s, touched %s) — %s\n" % (
+        t.id, t.status, t.fields["touched"], t.question) for t in threads)
 
 
 class Briefing:

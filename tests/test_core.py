@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 from tests.core_import import threads_core as core
 
@@ -459,6 +460,79 @@ class ContractVersion(unittest.TestCase):
                       core.contract_warning(self.scope))
         with self.assertRaises(core.ReadOnlyScope):
             core.ack(self.scope, "all")
+
+
+class Hanging(unittest.TestCase):
+    """The hanging set: modified since a snapshot, `open` or `proposed`, not touched today."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = tmp.name
+        os.mkdir(os.path.join(self.root, ".threads"))
+        self.scope = core.resolve_scope(self.root, {"HOME": os.path.join(self.root, "no-home")})
+        patcher = mock.patch.dict(os.environ, THREADS_TODAY="2026-01-03")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def put(self, thread_id, **extra):
+        fields = dict(VALID, id=thread_id)
+        fields.update(extra)
+        with open(os.path.join(self.root, ".threads", thread_id + ".md"), "w",
+                  encoding="utf-8") as f:
+            f.write(thread_text(**fields))
+
+    def edit(self, thread_id):
+        with open(os.path.join(self.root, ".threads", thread_id + ".md"), "a",
+                  encoding="utf-8") as f:
+            f.write("\n## 2026-01-03\n\nNote.\n")
+
+    def ids(self, snapshot):
+        return [t.id for t in core.hanging(self.scope, snapshot)]
+
+    def test_modified_open_and_proposed_hang(self):
+        self.put("b-open")
+        self.put("a-proposed", status="proposed")
+        self.put("c-deferred", status="deferred")
+        self.put("d-today", touched="2026-01-03")
+        self.put("e-untouched")
+        snap = core.take_snapshot(self.scope)
+        for thread_id in ("b-open", "a-proposed", "c-deferred", "d-today"):
+            self.edit(thread_id)
+        self.assertEqual(self.ids(snap), ["a-proposed", "b-open"])
+
+    def test_new_file_counts_as_modified(self):
+        snap = core.take_snapshot(self.scope)
+        self.put("new")
+        self.assertEqual(self.ids(snap), ["new"])
+
+    def test_unmodified_and_anomalies_never_hang(self):
+        self.put("a")
+        snap = core.take_snapshot(self.scope)
+        self.assertEqual(self.ids(snap), [])
+        with open(os.path.join(self.root, ".threads", "broken.md"), "w") as f:
+            f.write("no frontmatter\n")
+        self.assertEqual(self.ids(snap), [])
+
+    def test_moved_to_history_does_not_hang(self):
+        self.put("a")
+        snap = core.take_snapshot(self.scope)
+        os.mkdir(self.scope.history_dir)
+        os.rename(os.path.join(self.root, ".threads", "a.md"),
+                  os.path.join(self.scope.history_dir, "a.md"))
+        self.assertEqual(self.ids(snap), [])
+
+    def test_state_round_trip_is_atomic_json(self):
+        self.put("a")
+        path = os.path.join(self.scope.threads_dir, ".state", "x", "snap.json")
+        self.assertIsNone(core.read_state(path))
+        core.write_state(path, {"snapshot": core.take_snapshot(self.scope)})
+        self.assertEqual(os.listdir(os.path.dirname(path)), ["snap.json"])
+        self.edit("a")
+        self.assertEqual(self.ids(core.read_state(path)["snapshot"]), ["a"])
+        with open(path, "w") as f:
+            f.write("not json")
+        self.assertIsNone(core.read_state(path))
 
 
 class Today(unittest.TestCase):

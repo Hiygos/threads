@@ -91,7 +91,8 @@ PLUGIN_ENTRIES = {
 KEEP = ".gitkeep"
 # Implementation-private state is not part of the contract, wherever the
 # scope sits in the sandbox; git's own files are fixture plumbing.
-IGNORED_SUFFIXES = (".threads/.state/plugin", ".threads/.state/skill")
+STATE = ".threads/.state"
+IGNORED_SUFFIXES = (STATE + "/plugin", STATE + "/skill")
 IGNORED_NAMES = {"__pycache__", ".git"}
 GIT = ["git", "-c", "user.name=Conformance", "-c", "user.email=conformance@example.invalid",
        "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"]
@@ -244,6 +245,11 @@ def snapshot(root):
             path = os.path.join(folder, name)
             with open(path, "rb") as f:
                 tree[os.path.relpath(path, root).replace(os.sep, "/")] = f.read()
+    # A `.threads/.state/` holding only private state is private state too.
+    for rel in [r for r, data in tree.items() if data is None and
+                (r == STATE or r.endswith("/" + STATE))]:
+        if not any(other.startswith(rel + "/") for other in tree):
+            del tree[rel]
     return tree
 
 

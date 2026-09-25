@@ -5,7 +5,8 @@ A thin adapter over threads_core (packaged beside this file). `init [user]`
 creates a scope; every other subcommand works on the scope resolved from the
 current directory, runs the core's upkeep first, and is silent when no scope
 exists. `start` prints the briefing (its data sections: the rules are in
-SKILL.md). `ack <id>|all` acknowledges retirement notices, after the agent
+SKILL.md) and snapshots `.threads/`; `check` lists the threads modified since
+that snapshot that are still hanging. `ack <id>|all` acknowledges retirement notices, after the agent
 has told the user about them. In a scope with a newer or unreadable
 contract nothing is written: `regen` prints the warning and `ack` refuses.
 """
@@ -17,7 +18,21 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import threads_core  # noqa: E402
 
-USAGE = "usage: threads init [user] | threads start | threads regen | threads ack <id>|all\n"
+USAGE = ("usage: threads init [user] | threads start | threads check | threads regen"
+         " | threads ack <id>|all\n")
+
+# The one snapshot `start` takes and `check` compares with.
+SNAPSHOT = os.path.join(".state", "skill", "snapshot.json")  # inside `.threads/`
+
+CHECK_HEADER = (
+    "# Hanging threads\n"
+    "\n"
+    "Modified since `threads start`, still `open` or `proposed`, not touched today.\n"
+    "Declare each one's outcome before the final reply: resolved, deferred,\n"
+    "abandoned, or still open with an updated position; set `touched` to today.\n"
+    "\n"
+)
+NO_SNAPSHOT = "No snapshot to compare with: run `threads start` first.\n"
 
 SCRIPT = os.path.abspath(__file__)
 
@@ -42,7 +57,30 @@ def cmd_start(scope, args):
         return 2
     result = threads_core.upkeep(scope)
     brief = threads_core.briefing(scope, result, lambda t: ack_command(scope, t))
+    if not threads_core.contract_warning(scope):
+        threads_core.write_state(os.path.join(scope.threads_dir, SNAPSHOT),
+                                 {"snapshot": threads_core.take_snapshot(scope)})
     sys.stdout.write(brief.text())
+    return 0
+
+
+def cmd_check(scope, args):
+    if args:
+        sys.stderr.write(USAGE)
+        return 2
+    result = threads_core.upkeep(scope)
+    warning = threads_core.contract_warning(scope)
+    if warning:
+        # Nothing can be settled in a read-only scope: say why instead.
+        sys.stdout.write(warning)
+        return 0
+    state = threads_core.read_state(os.path.join(scope.threads_dir, SNAPSHOT))
+    if state is None or not isinstance(state.get("snapshot"), dict):
+        sys.stdout.write(NO_SNAPSHOT)
+        return 1
+    threads = threads_core.hanging(scope, state["snapshot"], result)
+    if threads:
+        sys.stdout.write(CHECK_HEADER + threads_core.render_hanging(threads))
     return 0
 
 
@@ -66,7 +104,7 @@ def cmd_ack(scope, args):
     return 0
 
 
-COMMANDS = {"start": cmd_start, "regen": cmd_regen, "ack": cmd_ack}
+COMMANDS = {"start": cmd_start, "check": cmd_check, "regen": cmd_regen, "ack": cmd_ack}
 
 
 def main(argv):

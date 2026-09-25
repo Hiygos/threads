@@ -3,8 +3,11 @@
 ## Purpose
 
 The single source of the shared core (`threads_core.py`, ADR 0003): parsing,
-rendering of generated files and of the briefing's data sections, and every
-rule that must behave identically in both implementations.
+rendering of generated files and of the briefing's data sections, snapshots
+of `.threads/` and the hanging set computed from one (`hanging`: modified
+since the snapshot, a new file included, still `open` or `proposed`,
+`touched` not today), and every rule that must behave identically in both
+implementations.
 
 ## Ownership
 

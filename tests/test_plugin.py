@@ -1,4 +1,4 @@
-"""Plugin adapter tests: the `sh` guard and SessionStart, through hook I/O only."""
+"""Plugin adapter tests: the `sh` guard, SessionStart and Stop, through hook I/O only."""
 import importlib.util
 import json
 import os
@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -50,8 +51,10 @@ class PluginHooks(unittest.TestCase):
         with open(os.path.join(self.work, ".threads", "sample.md"), "w", encoding="utf-8") as f:
             f.write(THREAD)
 
-    def hook(self, event="SessionStart", source="startup"):
-        payload = {"session_id": "s1", "hook_event_name": event, "cwd": self.work}
+    def hook(self, event="SessionStart", source="startup", session="s1", **extra):
+        payload = dict(extra, hook_event_name=event, cwd=self.work)
+        if session is not None:
+            payload["session_id"] = session
         if event == "SessionStart":
             payload["source"] = source
         # An isolated HOME: a real user scope on the machine is never read.
@@ -247,6 +250,8 @@ class PluginHooks(unittest.TestCase):
         self.add_scope()
         before = self.tree(self.plugin)
         self.hook()
+        self.edit("sample")
+        self.hook("Stop")
         self.assertEqual(self.tree(self.plugin), before)
 
     def test_newer_contract_writes_nothing_private_state_included(self):
@@ -264,6 +269,7 @@ class PluginHooks(unittest.TestCase):
 
         before = state()
         context = self.context(self.hook())
+        self.assertEqual(self.hook("Stop"), "")
         self.assertIn("uses contract %d; update threads" % (core.CONTRACT_VERSION + 1), context)
         env = dict(os.environ, PATH=self.bin, HOME=os.path.join(self.tmp.name, "home"))
         env.pop("THREADS_USER_ROOT", None)
@@ -271,6 +277,136 @@ class PluginHooks(unittest.TestCase):
                                "ack", "all"], cwd=self.work, env=env, capture_output=True)
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual(state(), before)
+
+    def edit(self, thread_id, note="More thinking."):
+        """Append a dated note, leaving `touched` as it was: the thread now hangs."""
+        with open(os.path.join(self.work, ".threads", thread_id + ".md"), "a",
+                  encoding="utf-8") as f:
+            f.write("\n## %s\n\n%s\n" % (TODAY, note))
+
+    def blocked(self, out):
+        """The ids listed by a Stop block (empty when the hook let the turn end)."""
+        if not out:
+            return []
+        output = json.loads(out)
+        self.assertEqual(output["decision"], "block")
+        return [line.split("`")[1] for line in output["reason"].splitlines()
+                if line.startswith("- `")]
+
+    def test_stop_blocks_on_a_hanging_thread(self):
+        self.real("python3")
+        self.add_scope()
+        self.write("quiet.md", THREAD.replace("sample", "quiet"))
+        self.write("parked.md", THREAD.replace("sample", "parked")
+                   .replace("status: open", "status: deferred"))
+        self.write("settled.md", THREAD.replace("sample", "settled"))
+        self.hook()
+        self.edit("sample")
+        self.edit("parked")
+        self.edit("settled")
+        with open(os.path.join(self.work, ".threads", "settled.md"), encoding="utf-8") as f:
+            text = f.read().replace("touched: 2026-01-02", "touched: " + TODAY)
+        self.write("settled.md", text)
+        self.write("fresh.md", THREAD.replace("sample", "fresh")
+                   .replace("status: open", "status: proposed"))
+        out = self.hook("Stop")
+        self.assertEqual(self.blocked(out), ["fresh", "sample"])
+        self.assertIn(os.path.realpath(self.work), json.loads(out)["reason"])
+
+    def test_stop_blocks_each_thread_once_per_session(self):
+        self.real("python3")
+        self.add_scope()
+        self.write("other.md", THREAD.replace("sample", "other"))
+        self.hook()
+        self.edit("sample")
+        self.assertEqual(self.blocked(self.hook("Stop")), ["sample"])
+        self.assertEqual(self.hook("Stop"), "")
+        self.edit("sample", "Still thinking.")
+        self.edit("other")
+        self.assertEqual(self.blocked(self.hook("Stop")), ["other"])
+        self.assertEqual(self.hook("Stop"), "")
+        # Another session has its own record.
+        self.hook(session="s2")
+        self.edit("sample", "Third note.")
+        self.assertEqual(self.blocked(self.hook("Stop", session="s2")), ["sample"])
+
+    def test_stop_respects_stop_hook_active(self):
+        self.real("python3")
+        self.add_scope()
+        self.hook()
+        self.edit("sample")
+        self.assertEqual(self.hook("Stop", stop_hook_active=True), "")
+        self.assertEqual(self.blocked(self.hook("Stop")), ["sample"])
+
+    def test_stop_ignores_another_sessions_modification(self):
+        # s2 changes the thread before s1 starts: s1's snapshot already holds it.
+        self.real("python3")
+        self.add_scope()
+        self.hook(session="s2")
+        self.edit("sample")
+        self.hook(session="s1")
+        self.assertEqual(self.hook("Stop", session="s1"), "")
+        self.assertEqual(self.blocked(self.hook("Stop", session="s2")), ["sample"])
+
+    def test_snapshot_kept_on_resume_and_compact_only(self):
+        self.real("python3")
+        self.add_scope()
+        for source, kept in (("resume", True), ("compact", True),
+                             ("startup", False), ("clear", False)):
+            with self.subTest(source=source):
+                session = "s-" + source
+                self.hook(session=session)
+                self.edit("sample", source)
+                self.hook(source=source, session=session)
+                self.assertEqual(self.blocked(self.hook("Stop", session=session)),
+                                 ["sample"] if kept else [])
+
+    def test_stop_without_session_id_or_scope_is_silent(self):
+        self.real("python3")
+        self.assertEqual(self.hook("Stop"), "")
+        self.assertEqual(os.listdir(self.work), [])
+        self.add_scope()
+        self.hook()
+        self.edit("sample")
+        self.assertEqual(self.hook("Stop", session=None), "")
+        self.assertEqual(self.hook("Stop", session="../escape"), "")
+        self.assertEqual(self.blocked(self.hook("Stop")), ["sample"])
+
+    def test_stop_without_a_snapshot_starts_one(self):
+        # The scope was created mid-session: nothing to compare with yet.
+        self.real("python3")
+        self.add_scope()
+        self.edit("sample")
+        self.assertEqual(self.hook("Stop"), "")
+        self.edit("sample", "Later.")
+        self.assertEqual(self.blocked(self.hook("Stop")), ["sample"])
+
+    def test_generated_files_regenerated_on_every_stop(self):
+        self.real("python3")
+        self.add_scope()
+        self.hook()
+        index = os.path.join(self.work, "THREADS.md")
+        for extra in ({}, {"stop_hook_active": True}, {"session": None}):
+            with self.subTest(extra=extra):
+                with open(index, "w", encoding="utf-8") as f:
+                    f.write("edited by hand\n")
+                self.write("added.md", THREAD.replace("sample", "added"))
+                self.hook("Stop", **extra)
+                with open(index, encoding="utf-8") as f:
+                    self.assertEqual(f.read(), core.render_index(core.scan(self.scope())))
+
+    def test_old_session_markers_pruned(self):
+        self.real("python3")
+        self.add_scope()
+        hook = self.plugin_module()
+        self.hook(session="old")
+        self.hook(session="recent")
+        sessions = os.path.join(self.work, ".threads", hook.SESSIONS_DIR)
+        old = os.path.join(sessions, "old.json")
+        stamp = time.time() - (hook.MARKER_MAX_AGE_DAYS + 1) * 86400
+        os.utime(old, (stamp, stamp))
+        self.hook(session="new")
+        self.assertEqual(sorted(os.listdir(sessions)), ["new.json", "recent.json"])
 
     def test_init_creates_and_refuses_with_exit_0(self):
         self.real("python3")

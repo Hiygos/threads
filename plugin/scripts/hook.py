@@ -3,7 +3,9 @@
 A thin adapter over threads_core (packaged beside this file), with three kinds
 of entry point. `hook.py <HookEventName>` reads the hook input JSON on stdin,
 resolves the scope from its `cwd`, and is silent when no scope exists; hook
-JSON output goes to stdout. `hook.py init [user]` is the body of the
+JSON output goes to stdout. SessionStart injects the briefing and records the
+session's snapshot; Stop rebuilds the generated files and blocks, once per
+thread and session, on the threads this session left hanging. `hook.py init [user]` is the body of the
 `/threads:init` skill: it creates a scope from the current directory and
 prints plain text for the model to report, always exiting 0 (a non-zero exit
 would make Claude Code fail the skill instead of showing the outcome).
@@ -14,8 +16,11 @@ in a read-only scope (newer or unreadable contract): `ack` refuses there.
 """
 import json
 import os
+import re
 import shlex
+import shutil
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -36,6 +41,35 @@ TRUNCATED = (
     "\n[Listing truncated to fit the session context: %d more lines. "
     "The full list is in THREADS.md at the scope root.]\n"
 )
+
+# Session markers: `.threads/.state/plugin/sessions/<session_id>.json`, holding
+# the snapshot taken at the session's start and the ids the Stop gate already
+# blocked on. Removed once untouched for this many days.
+SESSIONS_DIR = os.path.join(".state", "plugin", "sessions")
+MARKER_MAX_AGE_DAYS = 7
+SESSION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+
+# The Stop gate's reason: scope root, the hanging threads, today's date.
+STOP_REASON = """These threads changed during this session and are still `open` or `proposed`
+without today's `touched`. Settle each one before ending the turn.
+Scope at %s; paths are relative to it.
+
+%s
+For each one, pick the most likely outcome yourself instead of asking the user,
+apply it, and tell the user in one line per thread (the user corrects you if it
+is wrong):
+
+- resolved: set `status: resolved`, add a dated note with the outcome, and move
+  the file to `.threads/history/`;
+- abandoned: set `status: abandoned`, add a dated note with the reason, and move
+  the file to `.threads/history/`;
+- deferred: set `status: deferred` and add a dated note with the reason it waits;
+- still open: keep the status, update `leaning` to your current position, and
+  add a dated note.
+
+In every case set `touched: %s`. Re-read each file right before editing it,
+and never overwrite a file that already exists in `.threads/history/`.
+"""
 
 # The always-on rules, injected between the urgent sections and the listing.
 RULES = """# Working with threads
@@ -86,10 +120,55 @@ def fit_listing(listing, room):
     return listing
 
 
+def marker_path(scope, payload):
+    """The session marker's path, or None without a usable session id."""
+    session = payload.get("session_id")
+    if not isinstance(session, str) or not SESSION_ID_RE.fullmatch(session):
+        return None
+    return os.path.join(scope.threads_dir, SESSIONS_DIR, session + ".json")
+
+
+def new_marker(scope):
+    return {"snapshot": threads_core.take_snapshot(scope), "blocked": []}
+
+
+def prune_markers(scope, keep):
+    """Remove session markers (and leftovers) untouched for MARKER_MAX_AGE_DAYS."""
+    folder = os.path.join(scope.threads_dir, SESSIONS_DIR)
+    limit = time.time() - MARKER_MAX_AGE_DAYS * 86400
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(folder, name)
+        if path == keep:
+            continue
+        try:
+            if os.lstat(path).st_mtime >= limit:
+                continue
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.unlink(path)
+        except OSError:
+            pass  # Removed meanwhile by another session.
+
+
 def session_start(scope, payload):
     # Urgent sections first, then the rules, then the listing: the only part
     # cut to stay within the cap.
     result = threads_core.upkeep(scope)
+    marker = marker_path(scope, payload)
+    if marker is not None and not threads_core.contract_warning(scope):
+        # The same session goes on after resume/compact: keep its snapshot.
+        kept = (payload.get("source") in ("resume", "compact")
+                and threads_core.read_state(marker) is not None)
+        if kept:
+            os.utime(marker)
+        else:
+            threads_core.write_state(marker, new_marker(scope))
+        prune_markers(scope, marker)
     brief = threads_core.briefing(scope, result, lambda t: ack_command(scope, t), LEANING_MAX)
     fixed = len(brief.text(RULES, listing=""))
     context = brief.text(RULES, listing=fit_listing(brief.listing, CONTEXT_CAP - fixed))
@@ -97,7 +176,36 @@ def session_start(scope, payload):
                                    "additionalContext": context}}
 
 
-HOOKS = {"SessionStart": session_start}
+def stop_reason(scope, threads):
+    return STOP_REASON % (scope.root, threads_core.render_hanging(threads),
+                          threads_core.today().isoformat())
+
+
+def stop(scope, payload):
+    # Generated files are rebuilt on every Stop; a read-only scope gets no write.
+    result = threads_core.upkeep(scope)
+    marker = marker_path(scope, payload)
+    if marker is None or threads_core.contract_warning(scope):
+        return None
+    if payload.get("stop_hook_active"):
+        return None
+    state = threads_core.read_state(marker)
+    if state is None or not isinstance(state.get("snapshot"), dict):
+        # No snapshot for this session (the scope was created mid-session, or
+        # the marker was pruned): start one now, nothing to compare yet.
+        threads_core.write_state(marker, new_marker(scope))
+        return None
+    blocked = [b for b in state.get("blocked", []) if isinstance(b, str)]
+    threads = [t for t in threads_core.hanging(scope, state["snapshot"], result)
+               if t.id not in blocked]
+    if not threads:
+        return None
+    state["blocked"] = sorted(set(blocked) | {t.id for t in threads})
+    threads_core.write_state(marker, state)
+    return {"decision": "block", "reason": stop_reason(scope, threads)}
+
+
+HOOKS = {"SessionStart": session_start, "Stop": stop}
 
 
 def init(args):
@@ -137,7 +245,9 @@ def main(argv):
     scope = threads_core.resolve_scope(payload.get("cwd") or os.getcwd())
     if scope is None:
         return 0
-    sys.stdout.write(json.dumps(handler(scope, payload)) + "\n")
+    output = handler(scope, payload)
+    if output is not None:
+        sys.stdout.write(json.dumps(output) + "\n")
     return 0
 
 

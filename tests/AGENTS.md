@@ -10,9 +10,11 @@ runs every case against every implementation.
 - `test_core.py` — core unit tests, through the core's public interface.
 - `test_packaging.py` — packaged core copies identical to the source.
 - `test_plugin.py` — the plugin's `sh` guard (fake interpreters on `PATH`) and
-  hook I/O, including the briefing's order, the context cap, and a
-  read-only scope left untouched down to `.state/plugin/` and mtimes
-  (which conformance does not compare).
+  hook I/O, including the briefing's order, the context cap, the Stop gate
+  (hanging threads, once per thread, `stop_hook_active`, snapshot kept or
+  retaken per source, marker pruning), and a read-only scope left untouched
+  down to `.state/plugin/` and mtimes (which conformance does not compare).
+- `test_skill.py` — the skill script's `start` snapshot and `check`.
 - `conformance/` — the harness (`harness.py`) and one folder per case under
   `conformance/cases/` (`before/`, `after/`, `case.json`; format in the
   harness docstring, with how each operation maps to a plugin entry point:
@@ -22,6 +24,8 @@ runs every case against every implementation.
   directory (`cwd`), git repos (`git`), linked worktrees (`worktrees`),
   environment (`env`, `{sandbox}` expanded), a silence check (`silent`)
   and an operation run first through the other adapter (`prepare`).
+  Implementation-private state (`.threads/.state/plugin|skill/`, and a
+  `.threads/.state/` holding nothing else) is left out of the comparison.
   Adapter output is compared with the sandbox path written as `{sandbox}`,
   and each adapter's ack command prefix as `{threads}`. `start` is compared
   on the briefing's data sections: the plugin's SessionStart context minus
