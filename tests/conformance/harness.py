@@ -130,6 +130,7 @@ def base_env(case, sandbox, home):
     env["THREADS_TODAY"] = case["date"]
     env.pop("THREADS_USER_ROOT", None)
     env.pop("XDG_CONFIG_HOME", None)
+    env.pop("CLAUDE_PLUGIN_DATA", None)
     env["HOME"] = home
     # Some Pythons (Apple's) cache bytecode under $HOME, which may sit in the sandbox.
     env["PYTHONDONTWRITEBYTECODE"] = "1"

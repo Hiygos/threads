@@ -9,7 +9,8 @@ here), so it must work on its own, with nothing from the rest of the repo.
 ## Ownership
 
 - `.claude-plugin/plugin.json` — the plugin manifest.
-- `hooks/hooks.json` — hook declarations (SessionStart, Stop); every command
+- `hooks/hooks.json` — hook declarations (SessionStart, UserPromptSubmit,
+  Stop); every command
   runs through the guard.
 - `skills/init/SKILL.md` — `/threads:init [user]`, user-invoked only; its body
   runs `guard.sh init $ARGUMENTS` through `!` injection and the model only
@@ -46,6 +47,16 @@ here), so it must work on its own, with nothing from the rest of the repo.
   the core's hanging set against the session's snapshot, minus the marker's
   `blocked` ids, which it then records: each thread blocks at most once per
   session. With no marker it writes one and lets the turn end.
+- Skipped questions: every Stop, before the `stop_hook_active` return and the
+  gate, overwrites the stash `${CLAUDE_PLUGIN_DATA}/<session_id>` (JSON
+  `{"candidates": [...]}`, atomic) with the lines of `last_assistant_message`
+  ending in `?`, `？` or `؟`, outside fenced code, quotes, tables and headings,
+  capped by `MAX_CANDIDATES` (10, the first ones) and `CANDIDATE_MAX_CHARS`
+  (300, keeping the line's end); with none it removes the stash. The next
+  UserPromptSubmit reads and removes it and injects `CHECK` as
+  `additionalContext`. Without `CLAUDE_PLUGIN_DATA` (absolute) or a valid
+  session id, no stash; in a read-only scope nothing is stashed or injected.
+  SessionStart prunes stashes untouched for `STASH_MAX_AGE_DAYS` (7).
 - The gate compares with the session's own snapshot: a thread another session
   changed before this one started is never reported, but one another session
   changes concurrently, without setting today's `touched`, is indistinguishable

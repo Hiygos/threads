@@ -1,4 +1,4 @@
-"""Plugin adapter tests: the `sh` guard, SessionStart and Stop, through hook I/O only."""
+"""Plugin adapter tests: the `sh` guard, SessionStart, Stop and UserPromptSubmit, through hook I/O only."""
 import importlib.util
 import json
 import os
@@ -32,6 +32,8 @@ class PluginHooks(unittest.TestCase):
         os.mkdir(self.work)
         self.bin = os.path.join(self.tmp.name, "bin")
         os.mkdir(self.bin)
+        # The plugin's data folder, where Stop stashes the last reply's questions.
+        self.data = os.path.join(self.tmp.name, "data")
 
     def fake(self, name, body):
         path = os.path.join(self.bin, name)
@@ -51,7 +53,7 @@ class PluginHooks(unittest.TestCase):
         with open(os.path.join(self.work, ".threads", "sample.md"), "w", encoding="utf-8") as f:
             f.write(THREAD)
 
-    def hook(self, event="SessionStart", source="startup", session="s1", **extra):
+    def hook(self, event="SessionStart", source="startup", session="s1", data=True, **extra):
         payload = dict(extra, hook_event_name=event, cwd=self.work)
         if session is not None:
             payload["session_id"] = session
@@ -61,6 +63,9 @@ class PluginHooks(unittest.TestCase):
         env = dict(os.environ, PATH=self.bin, HOME=os.path.join(self.tmp.name, "home"),
                    TZ="UTC", THREADS_TODAY=TODAY)
         env.pop("THREADS_USER_ROOT", None)
+        env.pop("CLAUDE_PLUGIN_DATA", None)
+        if data:
+            env["CLAUDE_PLUGIN_DATA"] = self.data
         proc = subprocess.run(
             ["/bin/sh", os.path.join(self.plugin, "scripts", "guard.sh"), event],
             input=json.dumps(payload).encode("utf-8"),
@@ -408,6 +413,157 @@ class PluginHooks(unittest.TestCase):
         self.hook(session="new")
         self.assertEqual(sorted(os.listdir(sessions)), ["new.json", "recent.json"])
 
+    # Skipped questions: Stop stashes them, UserPromptSubmit injects them once.
+
+    def ask(self, message, **extra):
+        """End a turn with `message`, then submit the next prompt: the check's context, or None."""
+        self.hook("Stop", last_assistant_message=message, **extra)
+        out = self.hook("UserPromptSubmit", prompt="Next.", **extra)
+        if not out:
+            return None
+        output = json.loads(out)["hookSpecificOutput"]
+        self.assertEqual(output["hookEventName"], "UserPromptSubmit")
+        return output["additionalContext"]
+
+    def asked(self, message, **extra):
+        """The questions the check lists after a turn ending with `message`."""
+        context = self.ask(message, **extra)
+        if context is None:
+            return []
+        return [line[2:] for line in context.splitlines() if line.startswith("- ")]
+
+    def test_candidates_are_lines_ending_in_a_question_mark(self):
+        self.real("python3")
+        self.add_scope()
+        message = "\n".join([
+            "Done with the refactor.",
+            "Should the cache be per user?   ",
+            "- Or shared across tenants?",
+            "Full-width marks count too\uff1f",
+            "\u0647\u0644 \u0646\u0628\u062f\u0623\u061f",
+            "A question? In the middle.",
+            "```",
+            "Is this code?",
+            "```",
+            "~~~~ text",
+            "Still code?",
+            "```",
+            "Still code after a shorter fence?",
+            "~~~~",
+            "> Quoted question?",
+            "   > Indented quote?",
+            "# Heading question?",
+            "### Deeper heading?",
+            "Setext heading?",
+            "---",
+            "| Option | Why? |",
+            "|--------|------|",
+            "| A      | Fast? |",
+            "Left | Right?",
+            "---- | -----",
+            "Cell? | Cell?",
+            "",
+            "#hashtag start?",
+            "?",
+            "Last one?",
+        ])
+        self.assertEqual(self.asked(message), [
+            "Should the cache be per user?", "- Or shared across tenants?",
+            "Full-width marks count too\uff1f", "\u0647\u0644 \u0646\u0628\u062f\u0623\u061f",
+            "#hashtag start?", "Last one?"])
+
+    def test_candidates_capped_in_count_and_length(self):
+        self.real("python3")
+        self.add_scope()
+        hook = self.plugin_module()
+        many = ["Choice %d?" % n for n in range(hook.MAX_CANDIDATES + 3)]
+        self.assertEqual(self.asked("\n".join(many)), many[:hook.MAX_CANDIDATES])
+        long = "x" * (hook.CANDIDATE_MAX_CHARS * 2) + " which one?"
+        (listed,) = self.asked(long)
+        self.assertEqual(len(listed), hook.CANDIDATE_MAX_CHARS)
+        self.assertTrue(listed.endswith("which one?"))
+
+    def test_stash_consumed_and_deleted_by_the_next_prompt(self):
+        self.real("python3")
+        self.add_scope()
+        self.hook()
+        self.hook("Stop", last_assistant_message="Which cache?")
+        self.assertEqual(os.listdir(self.data), ["s1"])
+        out = self.hook("UserPromptSubmit", prompt="Go on.")
+        context = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("- Which cache?\n", context)
+        self.assertIn(os.path.realpath(self.work), context)
+        self.assertEqual(os.listdir(self.data), [])
+        self.assertEqual(self.hook("UserPromptSubmit", prompt="Again."), "")
+
+    def test_stash_is_per_session_and_the_last_stop_wins(self):
+        self.real("python3")
+        self.add_scope()
+        self.hook("Stop", last_assistant_message="First?")
+        self.hook("Stop", session="s2", last_assistant_message="Other session?")
+        self.assertEqual(self.asked("Second?", stop_hook_active=True), ["Second?"])
+        self.assertEqual(self.asked("Third?", session="s2"), ["Third?"])
+
+    def test_stop_without_candidates_leaves_no_stale_stash(self):
+        self.real("python3")
+        self.add_scope()
+        self.hook("Stop", last_assistant_message="Which cache?")
+        for extra in ({"last_assistant_message": "All done."}, {},
+                      {"last_assistant_message": "```\nx?\n```", "stop_hook_active": True}):
+            with self.subTest(extra=extra):
+                self.hook("Stop", last_assistant_message="Which cache?")
+                self.hook("Stop", **extra)
+                self.assertFalse(os.path.exists(os.path.join(self.data, "s1")))
+                self.assertEqual(self.hook("UserPromptSubmit", prompt="Next."), "")
+
+    def test_stash_is_written_even_when_stop_blocks(self):
+        self.real("python3")
+        self.add_scope()
+        self.hook()
+        self.edit("sample")
+        self.assertEqual(self.blocked(self.hook("Stop", last_assistant_message="Which?")),
+                         ["sample"])
+        self.assertEqual(self.asked("Settled. Anything else?", stop_hook_active=True),
+                         ["Settled. Anything else?"])
+
+    def test_skipped_questions_no_op_without_scope_data_or_session(self):
+        self.real("python3")
+        self.assertIsNone(self.ask("Which cache?"))
+        self.assertFalse(os.path.exists(self.data))
+        self.add_scope()
+        self.assertIsNone(self.ask("Which cache?", data=False))
+        self.assertIsNone(self.ask("Which cache?", session=None))
+        self.assertIsNone(self.ask("Which cache?", session="../escape"))
+        self.assertFalse(os.path.exists(self.data) and os.listdir(self.data))
+        # A stash left while the scope existed is kept until a prompt in one.
+        self.hook("Stop", last_assistant_message="Which cache?")
+        shutil.rmtree(os.path.join(self.work, ".threads"))
+        self.assertEqual(self.hook("UserPromptSubmit", prompt="Next."), "")
+        self.assertEqual(os.listdir(self.data), ["s1"])
+
+    def test_skipped_questions_silent_in_a_read_only_scope(self):
+        self.real("python3")
+        self.add_scope()
+        self.hook("Stop", last_assistant_message="Which cache?")
+        self.write(".contract", "%d\n" % (core.CONTRACT_VERSION + 1))
+        self.assertEqual(self.hook("UserPromptSubmit", prompt="Next."), "")
+        self.assertIsNone(self.ask("Which cache?"))
+        self.assertEqual(os.listdir(self.data), [])
+
+    def test_orphan_stashes_pruned(self):
+        self.real("python3")
+        self.add_scope()
+        hook = self.plugin_module()
+        os.makedirs(self.data)
+        stamp = time.time() - (hook.STASH_MAX_AGE_DAYS + 1) * 86400
+        for name in ("old", "s1", ".old.tmp-12", "recent", "unrelated.txt"):
+            with open(os.path.join(self.data, name), "w", encoding="utf-8") as f:
+                f.write("{}\n")
+            if name != "recent":
+                os.utime(os.path.join(self.data, name), (stamp, stamp))
+        self.hook(source="resume")
+        self.assertEqual(sorted(os.listdir(self.data)), ["recent", "s1", "unrelated.txt"])
+
     def test_init_creates_and_refuses_with_exit_0(self):
         self.real("python3")
         before = self.tree(self.plugin)
@@ -434,7 +590,8 @@ class PluginHooks(unittest.TestCase):
     def test_python_missing(self):
         self.add_scope()
         self.assertEqual(self.context(self.hook()), INACTIVE)
-        self.assertEqual(self.hook("Stop"), "")
+        self.assertEqual(self.hook("Stop", last_assistant_message="Which?"), "")
+        self.assertEqual(self.hook("UserPromptSubmit"), "")
 
     def test_python_too_old(self):
         self.too_old("python3")

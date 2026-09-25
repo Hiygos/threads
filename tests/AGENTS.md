@@ -12,7 +12,9 @@ runs every case against every implementation.
 - `test_plugin.py` — the plugin's `sh` guard (fake interpreters on `PATH`) and
   hook I/O, including the briefing's order, the context cap, the Stop gate
   (hanging threads, once per thread, `stop_hook_active`, snapshot kept or
-  retaken per source, marker pruning), and a read-only scope left untouched
+  retaken per source, marker pruning), the skipped-question stash (candidate
+  extraction and caps, consumed by UserPromptSubmit, never stale, orphan
+  pruning; `CLAUDE_PLUGIN_DATA` is a temp folder), and a read-only scope left untouched
   down to `.state/plugin/` and mtimes (which conformance does not compare).
 - `test_skill.py` — the skill script's `start` snapshot and `check`.
 - `conformance/` — the harness (`harness.py`) and one folder per case under
