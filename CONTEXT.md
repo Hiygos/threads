@@ -20,7 +20,15 @@ A question with nothing left open; not a thread.
 Something true regardless of the work in progress; not a thread.
 
 **Scope**:
-The one place a session's threads live: the **project scope** or the **user scope**, never both at once.
+The one place a session's threads live: the **project scope** or the **user scope**, never both at once. A scope exists exactly when its `.threads/` folder exists, and only the user creates one.
+
+**Project root**:
+The nearest folder, from where the session starts upward, that holds a `.threads/`; the project scope lives there.
+_Avoid_: working directory, cwd
+
+**User scope**:
+The scope shared by every project with no `.threads/` of its own, one per user and the same for every harness.
+_Avoid_: global scope
 
 ### The product
 

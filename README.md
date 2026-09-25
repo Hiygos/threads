@@ -42,24 +42,35 @@ Plugins for harnesses other than Claude Code are **out of scope** for now.
 The user chooses where to start a `.threads/` folder. There are two scopes:
 
 - **Project**: `<project>/.threads/`, with `<project>/THREADS.md`.
-- **User**: `~/.claude/.threads/`, with `~/.claude/THREADS.md`. This is shared
-  by every project that has no `.threads/` of its own.
+- **User**: `~/.agents/.threads/`, with `~/.agents/THREADS.md`. This is shared
+  by every project that has no `.threads/` of its own, and it is the same
+  folder for the plugin and the skill, whatever the harness. Set
+  `THREADS_USER_ROOT` to an absolute path to move it (to
+  `$THREADS_USER_ROOT/.threads/` and `$THREADS_USER_ROOT/THREADS.md`).
 
 Resolution rule, applied at every session:
 
-1. If the project root has a `.threads/`, the project scope is used, and the
-   user scope is **not read at all**. The two scopes are never merged.
-2. Otherwise, if `~/.claude/.threads/` exists, the user scope is used.
-3. Otherwise the plugin stays inactive.
+1. Starting from the directory the session starts in, look for a `.threads/`
+   there and in each parent. Stop at the git root (checked) or, outside a git
+   repository, just below the home directory (the home itself is not
+   checked). Outside both, only the start directory is checked. The first
+   `.threads/` found is the project scope, and the user scope is **not read
+   at all**. The two scopes are never merged.
+2. Otherwise, if the user-scope `.threads/` exists, the user scope is used.
+3. Otherwise threads stay inactive.
 
-The project root is the directory Claude Code was started in, not a
-subfolder the session later works in, so a subfolder never grows a second
-`.threads/`. All state (indexes, session markers, the queue of expiry
-notices) lives inside the resolved scope, so two scopes never share state.
+All state (indexes, session markers, the queue of expiry notices) lives inside
+the resolved scope, so two scopes never share state.
 
-A scope is created explicitly by the user (e.g. an init command), never by the
-plugin on its own. The skill follows the same rule, stated
-as instructions instead of enforced by hooks.
+A scope exists exactly when its `.threads/` folder exists; everything else
+inside it is created or rebuilt on demand. A scope is created only on the
+user's explicit request (a plain `mkdir .threads` is enough), never by the
+plugin or the skill on their own.
+
+Writing to the user scope happens outside the project, so some harnesses ask
+for approval on those writes (Claude Code outside its working directory,
+Codex in its default sandbox); allow the folder once in the harness's
+settings to avoid it.
 
 ## Origin
 
