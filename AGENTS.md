@@ -40,9 +40,9 @@ contract.
 ## Child DOX Index
 
 - [`core/`](core/AGENTS.md) — the single source of the shared core; packaged copies are never edited.
-- [`docs/`](docs/AGENTS.md) — agent-facing config (`docs/agents/`) and ADRs (`docs/adr/`, created lazily).
+- [`docs/`](docs/AGENTS.md) — agent-facing config (`docs/agents/`), ADRs (`docs/adr/`) and the acceptance-check map (`acceptance-checks.md`).
 - [`plugin/`](plugin/AGENTS.md) — the Claude Code plugin, as installed (the marketplace entry points here); hooks run through an `sh` guard.
-- [`scripts/`](scripts/AGENTS.md) — maintainer tooling: version agreement and the skill zip, run by the release workflow.
+- [`scripts/`](scripts/AGENTS.md) — maintainer tooling: version agreement and the skill zip (release workflow), and a manual Claude Code smoke test kept out of CI.
 - [`skill/`](skill/AGENTS.md) — the skill for any harness, as installed: `SKILL.md`, its references and the `threads` script.
 - [`tests/`](tests/AGENTS.md) — unit, packaging and conformance tests; goldens change only with `--update`.
 

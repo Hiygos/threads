@@ -1,0 +1,11 @@
+{
+  "date": "2026-03-10",
+  "operation": [
+    "start"
+  ],
+  "stdout": "# Retired proposals\n\nThese proposed threads went unconfirmed for more than 3 days and were moved\nto `.threads/history/expired/`. Tell the user about each one (moving the file\nback to `.threads/` restores it); only after telling them, acknowledge it by\nrunning the command shown, as is.\n\n- `lost-idea`\n  ack: `cd {sandbox} && {threads} ack lost-idea`\n- `stale-idea` — Should the export include archived rows?\n  ack: `cd {sandbox} && {threads} ack stale-idea`\n\nAll at once: `cd {sandbox} && {threads} ack all`\n\n# Active threads\n\nProject scope at {sandbox}; paths are relative to it.\n\n## Open\n\n- **[cache-policy](.threads/cache-policy.md)** — Which cache eviction policy fits best?\n  - leaning: LRU, until measurements say otherwise\n",
+  "refusal": null,
+  "prepare": [
+    "start"
+  ]
+}

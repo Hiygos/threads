@@ -46,7 +46,7 @@ Unknown fields may stay: they are kept and ignored.
 
 ## 4. Carry over pending retirement notices
 
-If the old setup kept unacknowledged retirement notices in a file such as
+If the old setup kept unacknowledged retirement notices in the JSON file
 `.threads/.state/pending-notices.json`, create one empty file
 `.threads/.state/notices/<id>` per id it lists (a valid id only), check they
 are all there, then remove the old file with the user's yes. `start` will

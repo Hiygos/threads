@@ -61,6 +61,8 @@ runs every case against every implementation.
 - Every test that runs an adapter or resolves a scope sets `HOME` to a
   temporary folder, so a real user scope on the machine is never read or
   written. Tests needing the `git` binary are skipped without it.
+- The retired manual acceptance checks map to tests named in
+  `docs/acceptance-checks.md`: renaming or removing one of them updates it.
 - Goldens change only through `python3 -m tests.conformance --update`, and the
   resulting diff is reviewed before committing. Empty fixture folders carry a
   `.gitkeep`, which the comparison ignores.
