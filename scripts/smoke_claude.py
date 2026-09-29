@@ -52,7 +52,9 @@ def main(extra):
             return 2
     reply = proc.stdout.strip()
     if proc.returncode != 0:
-        print("smoke: `claude -p` exited %d\n%s" % (proc.returncode, proc.stderr), file=sys.stderr)
+        # claude -p may report a failure (e.g. expired auth) on stdout
+        print("smoke: `claude -p` exited %d\n%s%s" % (proc.returncode, proc.stderr, reply),
+              file=sys.stderr)
         return 2
     if thread_id in reply:
         print("smoke: ok, the model saw %s" % thread_id)
